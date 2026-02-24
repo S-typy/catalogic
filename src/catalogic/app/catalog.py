@@ -148,6 +148,41 @@ def build_tree(db_path: str, *, root_id: int | None = None) -> list[dict[str, An
     return result
 
 
+def list_tree_children(
+    db_path: str,
+    *,
+    root_id: int,
+    dir_path: str | None = None,
+) -> dict[str, Any]:
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        root = storage.scan_roots.get_by_id(int(root_id))
+        if root is None:
+            raise ValueError(f"Root not found: {root_id}")
+
+        root_path = str(Path(root.path).expanduser().resolve())
+        current_path = str(Path(dir_path).expanduser().resolve()) if dir_path else root_path
+        try:
+            Path(current_path).relative_to(Path(root_path))
+        except ValueError as e:
+            raise ValueError("Directory path is outside root") from e
+
+        children = storage.files.list_directory_children(
+            root_id=int(root.id),
+            root_path=root_path,
+            dir_path=current_path,
+        )
+    finally:
+        storage.close()
+
+    return {
+        "root_id": int(root.id),
+        "root_path": root_path,
+        "dir_path": current_path,
+        "children": children,
+    }
+
+
 def _cleanup_tree(node: dict[str, Any]) -> None:
     if node.get("type") != "dir":
         return

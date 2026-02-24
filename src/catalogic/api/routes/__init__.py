@@ -9,7 +9,15 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from catalogic.app import add_root, build_tree, delete_root, find_duplicates, list_roots, search_files
+from catalogic.app import (
+    add_root,
+    build_tree,
+    delete_root,
+    find_duplicates,
+    list_roots,
+    list_tree_children,
+    search_files,
+)
 
 
 class RootCreateRequest(BaseModel):
@@ -144,6 +152,18 @@ def create_api_router() -> APIRouter:
     ) -> dict[str, Any]:
         db_path = request.app.state.db_path
         return {"roots": build_tree(db_path, root_id=root_id)}
+
+    @router.get("/tree/children")
+    def get_tree_children(
+        request: Request,
+        root_id: int = Query(ge=1),
+        dir_path: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        db_path = request.app.state.db_path
+        try:
+            return list_tree_children(db_path, root_id=root_id, dir_path=dir_path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.get("/search")
     def get_search(

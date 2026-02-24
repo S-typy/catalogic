@@ -57,3 +57,35 @@ def test_sqlite_repositories_upsert_and_search(tmp_path: Path) -> None:
         assert found[0].md5 == "b" * 32
     finally:
         storage.close()
+
+
+def test_sqlite_list_directory_children(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalogic.db"
+    data_root = tmp_path / "data"
+    nested = data_root / "nested"
+    nested.mkdir(parents=True)
+
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        root = storage.scan_roots.get_or_create(str(data_root))
+        assert root.id is not None
+
+        storage.files.upsert(root.id, _record(data_root / "a.txt", size=1, md5=None))
+        storage.files.upsert(root.id, _record(nested / "b.txt", size=2, md5=None))
+        storage.files.upsert(root.id, _record(nested / "c.txt", size=3, md5=None))
+
+        top = storage.files.list_directory_children(
+            root_id=root.id,
+            root_path=str(data_root),
+            dir_path=str(data_root),
+        )
+        assert [item["name"] for item in top] == ["nested", "a.txt"]
+
+        nested_children = storage.files.list_directory_children(
+            root_id=root.id,
+            root_path=str(data_root),
+            dir_path=str(nested),
+        )
+        assert [item["name"] for item in nested_children] == ["b.txt", "c.txt"]
+    finally:
+        storage.close()

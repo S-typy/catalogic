@@ -261,6 +261,66 @@ class SQLiteFileRepository(FileRepository):
             )
         return [(int(row["root_id"]), str(row["path"]), int(row["size"])) for row in cur.fetchall()]
 
+    def list_directory_children(
+        self,
+        *,
+        root_id: int,
+        root_path: str,
+        dir_path: str,
+    ) -> list[dict[str, Any]]:
+        normalized_root = _normalize_path(root_path)
+        normalized_dir = _normalize_path(dir_path)
+        root_prefix = normalized_root if normalized_root.endswith(os.sep) else normalized_root + os.sep
+        if normalized_dir != normalized_root and not normalized_dir.startswith(root_prefix):
+            return []
+
+        dir_prefix = normalized_dir if normalized_dir.endswith(os.sep) else normalized_dir + os.sep
+        escaped_prefix = _escape_like(dir_prefix)
+        cur = self._conn.execute(
+            """
+            SELECT path, size
+            FROM files
+            WHERE root_id = ? AND path LIKE ? ESCAPE '\\'
+            ORDER BY path
+            """,
+            (int(root_id), f"{escaped_prefix}%"),
+        )
+
+        dirs: dict[str, dict[str, Any]] = {}
+        files: dict[str, dict[str, Any]] = {}
+        for row in cur.fetchall():
+            file_path = str(row["path"])
+            if not file_path.startswith(dir_prefix):
+                continue
+            relative = file_path[len(dir_prefix) :]
+            if not relative:
+                continue
+            parts = relative.split(os.sep, 1)
+            name = parts[0]
+            if not name:
+                continue
+
+            if len(parts) == 1:
+                files[name] = {
+                    "name": name,
+                    "path": file_path,
+                    "type": "file",
+                    "size": int(row["size"]),
+                }
+                continue
+
+            child_path = os.path.join(normalized_dir, name)
+            dirs[name] = {
+                "name": name,
+                "path": child_path,
+                "type": "dir",
+                "has_children": True,
+            }
+
+        children = list(dirs.values()) + list(files.values())
+        children.sort(key=lambda item: (item.get("type") != "dir", str(item.get("name")).lower()))
+        return children
+
     def find_duplicates_by_name_size(self, *, limit_groups: int = 200) -> list[dict[str, Any]]:
         cur = self._conn.execute("SELECT path, size FROM files ORDER BY path")
         groups: dict[tuple[str, int], list[str]] = {}

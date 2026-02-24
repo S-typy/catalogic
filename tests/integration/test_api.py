@@ -37,6 +37,7 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
 
     r = client.post("/api/roots", json={"path": str(data_root)})
     assert r.status_code == 201
+    root_id = int(r.json()["id"])
 
     # Without worker heartbeat start should be rejected.
     r = client.post("/api/scan/start", json={})
@@ -61,6 +62,18 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
     tree = client.get("/api/tree")
     assert tree.status_code == 200
     assert tree.json()["roots"]
+
+    tree_root = client.get("/api/tree/children", params={"root_id": root_id})
+    assert tree_root.status_code == 200
+    root_children = tree_root.json()["children"]
+    root_names = [item["name"] for item in root_children]
+    assert root_names == ["a", "b"]
+
+    a_path = next(item["path"] for item in root_children if item["name"] == "a")
+    tree_a = client.get("/api/tree/children", params={"root_id": root_id, "dir_path": a_path})
+    assert tree_a.status_code == 200
+    a_children = tree_a.json()["children"]
+    assert [item["name"] for item in a_children] == ["dup.txt", "single.md"]
 
     search = client.get("/api/search", params={"pattern": "*.txt"})
     assert search.status_code == 200
