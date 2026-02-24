@@ -245,6 +245,13 @@ button {
   max-height: 180px;
 }
 
+.selection-info {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #52606d;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   .browser-layout {
     grid-template-columns: 1fr;

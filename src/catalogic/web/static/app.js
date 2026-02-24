@@ -102,6 +102,13 @@ function treeKey(rootId, path) {
   return `${String(rootId)}:${path}`;
 }
 
+function setFilesSelectionInfo(text) {
+  const info = $("files-selection-info");
+  if (info) {
+    info.textContent = text;
+  }
+}
+
 function formatSize(size) {
   const value = Number(size);
   if (!Number.isFinite(value) || value < 0) return "?";
@@ -188,9 +195,107 @@ function updateSortButtons() {
   $("sort-mtime-btn").textContent = `${labels.mtime}${fileSort.key === "mtime" ? ` ${arrow}` : ""}`;
 }
 
+function scrollSelectedFileIntoView() {
+  if (!selectedFilePath) {
+    return;
+  }
+  const body = $("files-table-body");
+  if (!body) {
+    return;
+  }
+  const rows = body.querySelectorAll("tr[data-file-path]");
+  rows.forEach((row) => {
+    if (row.dataset.filePath === selectedFilePath) {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  });
+}
+
+function getSortedCurrentFiles() {
+  return sortedFiles(currentFiles);
+}
+
+function selectFileByIndex(index, { ensureVisible = true } = {}) {
+  const rows = getSortedCurrentFiles();
+  if (!rows.length) {
+    return;
+  }
+  const clamped = Math.min(Math.max(index, 0), rows.length - 1);
+  const item = rows[clamped];
+  selectedFilePath = item.path;
+  setFilesSelectionInfo(`Выбран файл: ${item.path}`);
+  renderFilesTable();
+  if (ensureVisible) {
+    scrollSelectedFileIntoView();
+  }
+}
+
+function moveFileSelection(step) {
+  const rows = getSortedCurrentFiles();
+  if (!rows.length) {
+    return;
+  }
+  const currentIndex = rows.findIndex((item) => item.path === selectedFilePath);
+  const start = currentIndex >= 0 ? currentIndex : step > 0 ? -1 : rows.length;
+  selectFileByIndex(start + step);
+}
+
+function tryCopyToClipboard(text) {
+  if (!text) {
+    return Promise.resolve(false);
+  }
+
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard
+      .writeText(text)
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(ta);
+  return Promise.resolve(ok);
+}
+
+async function activateSelectedFile() {
+  if (!selectedFilePath) {
+    return;
+  }
+  const item = currentFiles.find((file) => file.path === selectedFilePath);
+  if (!item) {
+    return;
+  }
+  await activateFile(item);
+}
+
+async function activateFile(item) {
+  if (!item) {
+    return;
+  }
+  selectedFilePath = item.path;
+  renderFilesTable();
+  const copied = await tryCopyToClipboard(item.path);
+  if (copied) {
+    setFilesSelectionInfo(`Путь скопирован: ${item.path}`);
+  } else {
+    setFilesSelectionInfo(`Файл выбран: ${item.path}`);
+  }
+}
+
 function renderFilesTable() {
   const body = $("files-table-body");
   body.innerHTML = "";
+
+  if (selectedFilePath && !currentFiles.some((item) => item.path === selectedFilePath)) {
+    selectedFilePath = null;
+  }
 
   const rows = sortedFiles(currentFiles);
   if (!rows.length) {
@@ -206,12 +311,19 @@ function renderFilesTable() {
 
   rows.forEach((item) => {
     const tr = document.createElement("tr");
+    tr.dataset.filePath = item.path;
     if (item.path === selectedFilePath) {
       tr.classList.add("selected");
     }
     tr.onclick = () => {
       selectedFilePath = item.path;
+      setFilesSelectionInfo(`Выбран файл: ${item.path}`);
       renderFilesTable();
+    };
+    tr.ondblclick = () => {
+      activateFile(item).catch(() => {
+        setFilesSelectionInfo(`Файл выбран: ${item.path}`);
+      });
     };
 
     const name = document.createElement("td");
@@ -247,6 +359,7 @@ async function selectDirectory(rootId, dirPath, title) {
   selectedFilePath = null;
   currentFiles = data.files || [];
   $("files-title").textContent = `Файлы: ${title || dirPath}`;
+  setFilesSelectionInfo("Выберите файл для действий.");
   renderFilesTable();
   refreshDirectorySelectionHighlight();
 }
@@ -265,6 +378,7 @@ function createDirNode(item, rootId) {
   const name = document.createElement("span");
   name.className = "tree-name";
   name.dataset.dirKey = treeKey(rootId, item.path);
+  name.tabIndex = 0;
   name.textContent = item.name;
   row.appendChild(name);
 
@@ -312,6 +426,39 @@ function createDirNode(item, rootId) {
     });
   };
 
+  name.ondblclick = () => {
+    selectDirectory(rootId, item.path, item.path).catch((err) => {
+      alert(`Open directory failed: ${err.message}`);
+    });
+    if (toggle.textContent !== "·") {
+      expand().catch((err) => alert(`Load tree node failed: ${err.message}`));
+    }
+  };
+
+  name.onkeydown = (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      name.onclick();
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!expanded && toggle.textContent !== "·") {
+        expand().catch((err) => alert(`Load tree node failed: ${err.message}`));
+      }
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (expanded && toggle.textContent !== "·") {
+        expand().catch((err) => alert(`Load tree node failed: ${err.message}`));
+      }
+    }
+  };
+
   return wrapper;
 }
 
@@ -322,6 +469,7 @@ async function refreshTree() {
   selectedFilePath = null;
   currentFiles = [];
   $("files-title").textContent = "Файлы";
+  setFilesSelectionInfo("Выберите файл для действий.");
   renderFilesTable();
 
   const container = $("tree-result");
@@ -519,6 +667,50 @@ function bindActions() {
   };
 
   $("dups-refresh-btn").onclick = refreshDuplicates;
+
+  document.addEventListener("keydown", (event) => {
+    const treeTab = $("tab-tree");
+    if (!treeTab || !treeTab.classList.contains("active")) {
+      return;
+    }
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable ||
+        Boolean(target.closest("#tree-result")))
+    ) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveFileSelection(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveFileSelection(-1);
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      selectFileByIndex(0);
+      return;
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      selectFileByIndex(Number.MAX_SAFE_INTEGER);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      activateSelectedFile().catch(() => {
+        setFilesSelectionInfo("Не удалось обработать выбранный файл.");
+      });
+    }
+  });
 }
 
 async function bootstrap() {
