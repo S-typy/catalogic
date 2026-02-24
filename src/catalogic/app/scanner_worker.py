@@ -66,6 +66,7 @@ class ScannerWorker:
                     return should_stop_cached
 
                 def _progress(stats) -> None:
+                    storage.scan_state.touch_worker_heartbeat(pid=self._pid, host=self._host)
                     storage.scan_state.update_progress(
                         processed_files=total_processed + stats.files_discovered,
                         emitted_records=total_emitted + stats.records_emitted,

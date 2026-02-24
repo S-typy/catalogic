@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+import socket
 import time
 
 from catalogic.storage import open_sqlite_storage
@@ -68,12 +70,35 @@ class ScannerService:
         finally:
             storage.close()
         state["is_running"] = state.get("state") == "running"
+
         last_seen = state.get("worker_last_seen")
+        stale_sec: float | None
         if isinstance(last_seen, (int, float)):
             stale_sec = max(0.0, time.time() - float(last_seen))
-            state["worker_stale_sec"] = stale_sec
-            state["worker_alive"] = stale_sec <= 5.0
         else:
-            state["worker_stale_sec"] = None
-            state["worker_alive"] = False
+            stale_sec = None
+
+        heartbeat_alive = stale_sec is not None and stale_sec <= 5.0
+        pid_alive = self._is_worker_pid_alive_local(
+            pid=state.get("worker_pid"),
+            host=state.get("worker_host"),
+        )
+        state["worker_stale_sec"] = stale_sec
+        state["worker_alive"] = heartbeat_alive or pid_alive
+        state["worker_pid_alive"] = pid_alive
         return state
+
+    @staticmethod
+    def _is_worker_pid_alive_local(pid: object, host: object) -> bool:
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        if not isinstance(host, str) or host != socket.gethostname():
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Процесс существует, но нет прав на сигнал.
+            return True
