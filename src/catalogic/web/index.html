@@ -54,12 +54,13 @@
         <button id="tree-search-btn">Искать</button>
         <button id="tree-refresh-btn">Обновить дерево</button>
       </div>
-      <div class="browser-layout">
-        <div class="browser-pane">
+      <div id="browser-layout" class="browser-layout">
+        <div class="browser-pane browser-pane-left">
           <h3>Каталоги</h3>
           <div id="tree-result" class="box tree-box"></div>
         </div>
-        <div class="browser-pane">
+        <div id="pane-resizer" class="pane-resizer" title="Изменить размер панелей"></div>
+        <div class="browser-pane browser-pane-right">
           <h3 id="files-title">Файлы</h3>
           <div class="box files-box">
             <table class="files-table">

@@ -143,15 +143,43 @@ button {
 }
 
 .browser-layout {
+  --left-pane-width: 420px;
   display: grid;
-  grid-template-columns: 1fr 1.4fr;
-  gap: 12px;
+  grid-template-columns: minmax(220px, var(--left-pane-width)) 12px minmax(320px, 1fr);
+  gap: 0;
   margin-bottom: 10px;
+}
+
+.browser-layout.resizing {
+  user-select: none;
 }
 
 .browser-pane h3 {
   margin: 0 0 8px;
   font-size: 15px;
+}
+
+.browser-pane-left {
+  grid-column: 1;
+  padding-right: 8px;
+}
+
+.browser-pane-right {
+  grid-column: 3;
+  padding-left: 8px;
+}
+
+.pane-resizer {
+  grid-column: 2;
+  cursor: col-resize;
+  touch-action: none;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #e5e8ee, #cdd5df);
+  border: 1px solid #bcccdc;
+}
+
+.pane-resizer:hover {
+  background: linear-gradient(180deg, #d5dce6, #bcc7d6);
 }
 
 .files-box {
@@ -187,5 +215,17 @@ button {
 @media (max-width: 900px) {
   .browser-layout {
     grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .browser-pane-left,
+  .browser-pane-right {
+    grid-column: 1;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .pane-resizer {
+    display: none;
   }
 }
