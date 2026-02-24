@@ -1,0 +1,1 @@
+"""Минимальный frontend service."""

@@ -1,0 +1,15 @@
+[Unit]
+Description=Catalogic STEP1 Backend API
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__ENV__
+ExecStart=__VENV__/bin/catalogic-server
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

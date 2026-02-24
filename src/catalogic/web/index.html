@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Catalogic STEP1</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="header">
+    <h1>Catalogic STEP1</h1>
+    <div id="scan-status" class="status">status: unknown</div>
+  </header>
+  <div id="worker-warning" class="warning hidden">
+    Scanner worker offline. Запустите сервис `catalogic-scanner`.
+  </div>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="settings">Настройки</button>
+    <button class="tab" data-tab="tree">Просмотр дерева</button>
+    <button class="tab" data-tab="dups">Поиск дубликатов</button>
+  </nav>
+
+  <main>
+    <section id="tab-settings" class="panel active">
+      <h2>Настройки</h2>
+      <div class="row">
+        <input id="root-input" type="text" placeholder="/mnt/storage/media">
+        <button id="add-root-btn">Добавить путь</button>
+      </div>
+      <div class="row">
+        <button id="start-scan-btn" disabled>Старт сканера</button>
+        <button id="stop-scan-btn" disabled>Стоп сканера</button>
+      </div>
+      <ul id="roots-list" class="list"></ul>
+    </section>
+
+    <section id="tab-tree" class="panel">
+      <h2>Просмотр дерева</h2>
+      <div class="row">
+        <input id="tree-search-input" type="text" placeholder="Поиск по имени (*, ?)">
+        <button id="tree-search-btn">Искать</button>
+        <button id="tree-refresh-btn">Обновить дерево</button>
+      </div>
+      <pre id="tree-result" class="box"></pre>
+      <pre id="tree-search-result" class="box"></pre>
+    </section>
+
+    <section id="tab-dups" class="panel">
+      <h2>Поиск дубликатов (имя + размер)</h2>
+      <button id="dups-refresh-btn">Обновить</button>
+      <pre id="dups-result" class="box"></pre>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

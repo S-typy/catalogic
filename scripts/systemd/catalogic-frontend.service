@@ -1,0 +1,15 @@
+[Unit]
+Description=Catalogic STEP1 Frontend
+After=network.target catalogic-backend.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__ENV__
+ExecStart=__VENV__/bin/catalogic-frontend
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

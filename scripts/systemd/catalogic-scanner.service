@@ -1,0 +1,15 @@
+[Unit]
+Description=Catalogic STEP1 Scanner Worker
+After=network.target catalogic-backend.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__ENV__
+ExecStart=__VENV__/bin/catalogic-scanner
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
