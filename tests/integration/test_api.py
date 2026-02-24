@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from pathlib import Path
 
@@ -75,6 +76,18 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
     a_children = tree_a.json()["children"]
     assert [item["name"] for item in a_children] == ["dup.txt", "single.md"]
     assert all(isinstance(item["mtime"], float) for item in a_children)
+
+    file_info = client.get(
+        "/api/file/details",
+        params={"root_id": root_id, "path": str(data_root / "a" / "dup.txt")},
+    )
+    assert file_info.status_code == 200
+    info = file_info.json()
+    assert info["path"] == str(data_root / "a" / "dup.txt")
+    assert info["md5"] == hashlib.md5(b"ab").hexdigest()
+    assert "video_meta" in info
+    assert "audio_meta" in info
+    assert "image_meta" in info
 
     search = client.get("/api/search", params={"pattern": "*.txt"})
     assert search.status_code == 200

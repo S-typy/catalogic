@@ -4,6 +4,7 @@ const PANEL_WIDTH_STORAGE_KEY = "catalogic_tree_left_panel_width";
 
 let pickerCurrentPath = null;
 const treeCache = new Map();
+const fileDetailsCache = new Map();
 let selectedDirKey = null;
 let selectedDirContext = null;
 let selectedFilePath = null;
@@ -141,6 +142,13 @@ function setFilesSelectionInfo(text) {
   }
 }
 
+function setFileDetailsPlaceholder(text) {
+  const panel = $("file-details-panel");
+  if (panel) {
+    panel.textContent = text;
+  }
+}
+
 function formatSize(size) {
   const value = Number(size);
   if (!Number.isFinite(value) || value < 0) return "?";
@@ -229,6 +237,89 @@ function updateSortButtons() {
   $("sort-mtime-btn").textContent = `${labels.mtime}${fileSort.key === "mtime" ? ` ${arrow}` : ""}`;
 }
 
+function toMetaText(meta) {
+  if (!meta || typeof meta !== "object") {
+    return "n/a";
+  }
+  return JSON.stringify(meta, null, 2);
+}
+
+function renderFileDetails(details) {
+  const panel = $("file-details-panel");
+  if (!panel) {
+    return;
+  }
+  if (!details) {
+    panel.textContent = "Нет данных по выбранному файлу.";
+    return;
+  }
+
+  panel.innerHTML = "";
+  const grid = document.createElement("div");
+  grid.className = "file-details-grid";
+
+  const addPair = (key, value) => {
+    const keyNode = document.createElement("div");
+    keyNode.className = "file-details-key";
+    keyNode.textContent = key;
+    grid.appendChild(keyNode);
+
+    const valueNode = document.createElement("div");
+    valueNode.className = "file-details-value";
+    valueNode.textContent = value;
+    grid.appendChild(valueNode);
+  };
+
+  addPair("Путь", details.path || "-");
+  addPair("Имя", details.name || "-");
+  addPair("Размер", `${formatSize(details.size)} (${Number(details.size || 0)} B)`);
+  addPair("Дата изменения", formatDateTime(details.mtime));
+  addPair("Дата создания", formatDateTime(details.ctime));
+  addPair("MIME", details.mime || "-");
+  addPair("Символическая ссылка", details.is_symlink ? "Да" : "Нет");
+  addPair("MD5", details.md5 || "n/a");
+
+  const sections = [
+    { title: "Video metadata", payload: details.video_meta },
+    { title: "Audio metadata", payload: details.audio_meta },
+    { title: "Image metadata", payload: details.image_meta },
+  ];
+
+  sections.forEach((section) => {
+    const wrap = document.createElement("div");
+    wrap.className = "file-details-meta";
+    const title = document.createElement("strong");
+    title.textContent = section.title;
+    wrap.appendChild(title);
+    const pre = document.createElement("pre");
+    pre.textContent = toMetaText(section.payload);
+    wrap.appendChild(pre);
+    grid.appendChild(wrap);
+  });
+
+  panel.appendChild(grid);
+}
+
+async function getFileDetails(rootId, path, force = false) {
+  const key = `${String(rootId)}:${path}`;
+  if (!force && fileDetailsCache.has(key)) {
+    return fileDetailsCache.get(key);
+  }
+  const query = new URLSearchParams({ root_id: String(rootId), path });
+  const payload = await api(`/api/file/details?${query.toString()}`);
+  fileDetailsCache.set(key, payload);
+  return payload;
+}
+
+async function loadAndRenderFileDetails(rootId, path) {
+  setFileDetailsPlaceholder("Загрузка информации о файле...");
+  const details = await getFileDetails(rootId, path);
+  if (selectedFilePath !== path) {
+    return;
+  }
+  renderFileDetails(details);
+}
+
 function scrollSelectedFileIntoView() {
   if (!selectedFilePath) {
     return;
@@ -259,6 +350,11 @@ function selectFileByIndex(index, { ensureVisible = true } = {}) {
   selectedFilePath = item.path;
   setFilesSelectionInfo(`Выбран файл: ${item.path}`);
   renderFilesTable();
+  if (selectedDirContext) {
+    loadAndRenderFileDetails(selectedDirContext.rootId, item.path).catch(() => {
+      setFileDetailsPlaceholder("Не удалось загрузить детальную информацию о файле.");
+    });
+  }
   if (ensureVisible) {
     scrollSelectedFileIntoView();
   }
@@ -371,6 +467,11 @@ function renderFilesTable() {
       selectedFilePath = item.path;
       setFilesSelectionInfo(`Выбран файл: ${item.path}`);
       renderFilesTable();
+      if (selectedDirContext) {
+        loadAndRenderFileDetails(selectedDirContext.rootId, item.path).catch(() => {
+          setFileDetailsPlaceholder("Не удалось загрузить детальную информацию о файле.");
+        });
+      }
     };
     tr.ondblclick = () => {
       activateFile(item).catch(() => {
@@ -417,6 +518,7 @@ async function selectDirectory(rootId, dirPath, title) {
   currentFiles = data.files || [];
   $("files-title").textContent = `Файлы: ${title || dirPath}`;
   setFilesSelectionInfo("Выберите файл для действий.");
+  setFileDetailsPlaceholder("Выберите файл в таблице, чтобы посмотреть полную информацию.");
   renderFilesTable();
   refreshDirectorySelectionHighlight();
 }
@@ -522,12 +624,14 @@ function createDirNode(item, rootId) {
 async function refreshTree() {
   const roots = await api("/api/roots");
   treeCache.clear();
+  fileDetailsCache.clear();
   selectedDirKey = null;
   selectedDirContext = null;
   selectedFilePath = null;
   currentFiles = [];
   $("files-title").textContent = "Файлы";
   setFilesSelectionInfo("Выберите файл для действий.");
+  setFileDetailsPlaceholder("Выберите файл в таблице, чтобы посмотреть полную информацию.");
   renderFilesTable();
 
   const container = $("tree-result");

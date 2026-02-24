@@ -92,3 +92,27 @@ def test_sqlite_list_directory_children(tmp_path: Path) -> None:
         assert all(isinstance(item["mtime"], float) for item in nested_children)
     finally:
         storage.close()
+
+
+def test_sqlite_get_file_by_root_and_path(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalogic.db"
+    data_root = tmp_path / "data"
+    data_root.mkdir(parents=True)
+    file_path = data_root / "movie.mkv"
+
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        root = storage.scan_roots.get_or_create(str(data_root))
+        assert root.id is not None
+        storage.files.upsert(root.id, _record(file_path, size=123, md5="f" * 32))
+
+        record = storage.files.get_by_root_and_path(root_id=root.id, path=str(file_path))
+        assert record is not None
+        assert record.path == str(file_path)
+        assert record.size == 123
+        assert record.md5 == "f" * 32
+
+        missing = storage.files.get_by_root_and_path(root_id=root.id, path=str(data_root / "missing.txt"))
+        assert missing is None
+    finally:
+        storage.close()

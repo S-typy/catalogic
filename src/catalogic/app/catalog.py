@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,14 @@ def _serialize_record(record: FileRecord) -> dict[str, Any]:
         "is_symlink": record.is_symlink,
         "md5": record.md5,
     }
+
+
+def _serialize_meta(meta: object | None) -> dict[str, Any] | None:
+    if meta is None:
+        return None
+    if is_dataclass(meta):
+        return asdict(meta)
+    return {"value": str(meta)}
 
 
 def list_roots(db_path: str) -> list[ScanRoot]:
@@ -181,6 +190,27 @@ def list_tree_children(
         "dir_path": current_path,
         "children": children,
     }
+
+
+def get_file_details(db_path: str, *, root_id: int, path: str) -> dict[str, Any] | None:
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        root = storage.scan_roots.get_by_id(int(root_id))
+        if root is None:
+            return None
+        record = storage.files.get_by_root_and_path(root_id=int(root.id), path=path)
+    finally:
+        storage.close()
+
+    if record is None:
+        return None
+
+    payload = _serialize_record(record)
+    payload["root_id"] = int(root.id)
+    payload["video_meta"] = _serialize_meta(record.video_meta)
+    payload["audio_meta"] = _serialize_meta(record.audio_meta)
+    payload["image_meta"] = _serialize_meta(record.image_meta)
+    return payload
 
 
 def _cleanup_tree(node: dict[str, Any]) -> None:

@@ -14,6 +14,7 @@ from catalogic.app import (
     build_tree,
     delete_root,
     find_duplicates,
+    get_file_details,
     list_roots,
     list_tree_children,
     search_files,
@@ -164,6 +165,18 @@ def create_api_router() -> APIRouter:
             return list_tree_children(db_path, root_id=root_id, dir_path=dir_path)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/file/details")
+    def get_file_detail(
+        request: Request,
+        root_id: int = Query(ge=1),
+        path: str = Query(min_length=1),
+    ) -> dict[str, Any]:
+        db_path = request.app.state.db_path
+        details = get_file_details(db_path, root_id=root_id, path=path)
+        if details is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        return details
 
     @router.get("/search")
     def get_search(

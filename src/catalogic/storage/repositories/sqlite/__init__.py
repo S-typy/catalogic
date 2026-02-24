@@ -239,6 +239,23 @@ class SQLiteFileRepository(FileRepository):
         )
         return [_row_to_file_record(row) for row in cur.fetchall()]
 
+    def get_by_root_and_path(self, *, root_id: int, path: str) -> FileRecord | None:
+        cur = self._conn.execute(
+            """
+            SELECT
+                path, size, mtime, ctime, mime, is_symlink, md5,
+                video_meta_json, audio_meta_json, image_meta_json
+            FROM files
+            WHERE root_id = ? AND path = ?
+            LIMIT 1
+            """,
+            (int(root_id), path),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return _row_to_file_record(row)
+
     def count_by_root(self, root_id: int) -> int:
         cur = self._conn.execute(
             "SELECT COUNT(*) AS cnt FROM files WHERE root_id = ?",

@@ -5,6 +5,7 @@ from catalogic.app.catalog import (
     build_tree,
     delete_root,
     find_duplicates,
+    get_file_details,
     list_roots,
     list_tree_children,
     search_files,
@@ -23,5 +24,6 @@ __all__ = [
     "search_files",
     "build_tree",
     "list_tree_children",
+    "get_file_details",
     "find_duplicates",
 ]
