@@ -67,6 +67,12 @@ main {
   display: block;
 }
 
+#tab-tree.panel.active {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .row {
   display: flex;
   gap: 8px;
@@ -102,7 +108,8 @@ button {
 
 .tree-box {
   font-family: Menlo, Consolas, monospace;
-  min-height: 420px;
+  min-height: 0;
+  height: 100%;
 }
 
 .tree-node {
@@ -148,6 +155,8 @@ button {
   grid-template-columns: minmax(220px, var(--left-pane-width)) 12px minmax(320px, 1fr);
   gap: 0;
   margin-bottom: 10px;
+  height: clamp(320px, calc(100vh - 320px), 720px);
+  min-height: 0;
 }
 
 .browser-layout.resizing {
@@ -157,6 +166,12 @@ button {
 .browser-pane h3 {
   margin: 0 0 8px;
   font-size: 15px;
+}
+
+.browser-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .browser-pane-left {
@@ -183,7 +198,8 @@ button {
 }
 
 .files-box {
-  min-height: 420px;
+  min-height: 0;
+  height: 100%;
 }
 
 .files-table {
@@ -207,15 +223,33 @@ button {
   padding: 0;
 }
 
+.files-table tbody tr {
+  cursor: pointer;
+}
+
+.files-table tbody tr:hover td {
+  background: #f5f8fe;
+}
+
+.files-table tbody tr.selected td {
+  background: #dbeafe;
+}
+
 .files-table td:nth-child(2),
 .files-table td:nth-child(3) {
   white-space: nowrap;
+}
+
+#tree-search-result.box {
+  min-height: 80px;
+  max-height: 180px;
 }
 
 @media (max-width: 900px) {
   .browser-layout {
     grid-template-columns: 1fr;
     gap: 12px;
+    height: auto;
   }
 
   .browser-pane-left,
@@ -227,5 +261,10 @@ button {
 
   .pane-resizer {
     display: none;
+  }
+
+  .tree-box,
+  .files-box {
+    min-height: 220px;
   }
 }

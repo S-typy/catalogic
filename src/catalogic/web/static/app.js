@@ -5,6 +5,7 @@ const PANEL_WIDTH_STORAGE_KEY = "catalogic_tree_left_panel_width";
 let pickerCurrentPath = null;
 const treeCache = new Map();
 let selectedDirKey = null;
+let selectedFilePath = null;
 let currentFiles = [];
 const fileSort = { key: "name", direction: "asc" };
 
@@ -205,6 +206,13 @@ function renderFilesTable() {
 
   rows.forEach((item) => {
     const tr = document.createElement("tr");
+    if (item.path === selectedFilePath) {
+      tr.classList.add("selected");
+    }
+    tr.onclick = () => {
+      selectedFilePath = item.path;
+      renderFilesTable();
+    };
 
     const name = document.createElement("td");
     name.textContent = item.name;
@@ -236,6 +244,7 @@ function setFileSort(key) {
 async function selectDirectory(rootId, dirPath, title) {
   const data = await getDirData(rootId, dirPath);
   selectedDirKey = treeKey(rootId, dirPath);
+  selectedFilePath = null;
   currentFiles = data.files || [];
   $("files-title").textContent = `Файлы: ${title || dirPath}`;
   renderFilesTable();
@@ -310,6 +319,7 @@ async function refreshTree() {
   const roots = await api("/api/roots");
   treeCache.clear();
   selectedDirKey = null;
+  selectedFilePath = null;
   currentFiles = [];
   $("files-title").textContent = "Файлы";
   renderFilesTable();
