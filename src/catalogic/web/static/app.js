@@ -5,6 +5,7 @@ const PANEL_WIDTH_STORAGE_KEY = "catalogic_tree_left_panel_width";
 let pickerCurrentPath = null;
 const treeCache = new Map();
 let selectedDirKey = null;
+let selectedDirContext = null;
 let selectedFilePath = null;
 let currentFiles = [];
 const fileSort = { key: "name", direction: "asc" };
@@ -102,6 +103,37 @@ function treeKey(rootId, path) {
   return `${String(rootId)}:${path}`;
 }
 
+function normalizePath(path) {
+  if (!path) {
+    return "/";
+  }
+  if (path === "/") {
+    return "/";
+  }
+  return String(path).replace(/\/+$/, "");
+}
+
+function getParentPath(path) {
+  const normalized = normalizePath(path);
+  if (normalized === "/") {
+    return "/";
+  }
+  const idx = normalized.lastIndexOf("/");
+  if (idx <= 0) {
+    return "/";
+  }
+  return normalized.slice(0, idx);
+}
+
+function isInsideRoot(path, rootPath) {
+  const normalizedPath = normalizePath(path);
+  const normalizedRoot = normalizePath(rootPath);
+  if (normalizedRoot === "/") {
+    return normalizedPath.startsWith("/");
+  }
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
 function setFilesSelectionInfo(text) {
   const info = $("files-selection-info");
   if (info) {
@@ -148,6 +180,8 @@ async function getDirData(rootId, dirPath, force = false) {
   const payload = await api(`/api/tree/children?${query.toString()}`);
   const split = splitChildren(payload);
   const data = {
+    rootId: Number(payload.root_id || rootId),
+    rootPath: payload.root_path || dirPath,
     dirPath: payload.dir_path || dirPath,
     dirs: split.dirs,
     files: split.files,
@@ -275,6 +309,24 @@ async function activateSelectedFile() {
   await activateFile(item);
 }
 
+async function navigateToParentDirectory() {
+  if (!selectedDirContext) {
+    setFilesSelectionInfo("Сначала выберите каталог в дереве.");
+    return;
+  }
+  const currentPath = normalizePath(selectedDirContext.dirPath);
+  const rootPath = normalizePath(selectedDirContext.rootPath);
+  if (currentPath === rootPath) {
+    setFilesSelectionInfo("Вы уже в корневом каталоге.");
+    return;
+  }
+
+  const parentPath = normalizePath(getParentPath(currentPath));
+  const targetPath = isInsideRoot(parentPath, rootPath) ? parentPath : rootPath;
+  await selectDirectory(selectedDirContext.rootId, targetPath, targetPath);
+  setFilesSelectionInfo(`Каталог: ${targetPath}`);
+}
+
 async function activateFile(item) {
   if (!item) {
     return;
@@ -355,7 +407,12 @@ function setFileSort(key) {
 
 async function selectDirectory(rootId, dirPath, title) {
   const data = await getDirData(rootId, dirPath);
-  selectedDirKey = treeKey(rootId, dirPath);
+  selectedDirContext = {
+    rootId: Number(rootId),
+    rootPath: normalizePath(data.rootPath || dirPath),
+    dirPath: normalizePath(data.dirPath || dirPath),
+  };
+  selectedDirKey = treeKey(rootId, selectedDirContext.dirPath);
   selectedFilePath = null;
   currentFiles = data.files || [];
   $("files-title").textContent = `Файлы: ${title || dirPath}`;
@@ -466,6 +523,7 @@ async function refreshTree() {
   const roots = await api("/api/roots");
   treeCache.clear();
   selectedDirKey = null;
+  selectedDirContext = null;
   selectedFilePath = null;
   currentFiles = [];
   $("files-title").textContent = "Файлы";
@@ -674,13 +732,36 @@ function bindActions() {
       return;
     }
     const target = event.target;
-    if (
+    const inEditable =
       target instanceof HTMLElement &&
-      (target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable ||
-        Boolean(target.closest("#tree-result")))
-    ) {
+      (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+    if (inEditable) {
+      return;
+    }
+    const inTree = target instanceof HTMLElement && Boolean(target.closest("#tree-result"));
+    const isCopyHotkey =
+      (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "c";
+    if (inTree && event.key !== "Backspace" && !isCopyHotkey) {
+      return;
+    }
+
+    if (isCopyHotkey) {
+      event.preventDefault();
+      if (!selectedFilePath) {
+        setFilesSelectionInfo("Сначала выберите файл.");
+        return;
+      }
+      activateSelectedFile().catch(() => {
+        setFilesSelectionInfo("Не удалось скопировать путь файла.");
+      });
+      return;
+    }
+
+    if (event.key === "Backspace") {
+      event.preventDefault();
+      navigateToParentDirectory().catch(() => {
+        setFilesSelectionInfo("Не удалось перейти в родительский каталог.");
+      });
       return;
     }
 
