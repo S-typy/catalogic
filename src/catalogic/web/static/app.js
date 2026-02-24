@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const API_BASE = window.CATALOGIC_API_BASE || "";
+let pickerCurrentPath = null;
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -38,6 +39,39 @@ async function refreshRoots() {
     li.appendChild(del);
     ul.appendChild(li);
   });
+}
+
+async function openDirPicker(startPath = null) {
+  $("dir-picker").classList.remove("hidden");
+  await loadDirPicker(startPath);
+}
+
+function closeDirPicker() {
+  $("dir-picker").classList.add("hidden");
+}
+
+async function loadDirPicker(path = null) {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  const data = await api(`/api/fs/list-dirs${query}`);
+  pickerCurrentPath = data.current_path;
+  $("picker-current-path").textContent = data.current_path;
+
+  const list = $("picker-list");
+  list.innerHTML = "";
+  data.dirs.forEach((dir) => {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.textContent = dir.name;
+    btn.onclick = () => loadDirPicker(dir.path);
+    li.appendChild(btn);
+    list.appendChild(li);
+  });
+
+  const upBtn = $("picker-up-btn");
+  upBtn.disabled = !data.parent_path;
+  upBtn.onclick = () => {
+    if (data.parent_path) loadDirPicker(data.parent_path);
+  };
 }
 
 async function refreshStatus() {
@@ -91,6 +125,22 @@ function bindActions() {
     });
     $("root-input").value = "";
     await refreshRoots();
+  };
+
+  $("open-picker-btn").onclick = async () => {
+    try {
+      const raw = $("root-input").value.trim();
+      await openDirPicker(raw || null);
+    } catch (err) {
+      alert(`Directory picker failed: ${err.message}`);
+    }
+  };
+  $("picker-close-btn").onclick = closeDirPicker;
+  $("picker-select-btn").onclick = () => {
+    if (pickerCurrentPath) {
+      $("root-input").value = pickerCurrentPath;
+    }
+    closeDirPicker();
   };
 
   $("start-scan-btn").onclick = async () => {

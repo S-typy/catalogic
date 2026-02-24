@@ -26,7 +26,19 @@
       <h2>Настройки</h2>
       <div class="row">
         <input id="root-input" type="text" placeholder="/mnt/storage/media">
+        <button id="open-picker-btn">Выбрать каталог</button>
         <button id="add-root-btn">Добавить путь</button>
+      </div>
+      <div id="dir-picker" class="box hidden">
+        <div class="row">
+          <strong id="picker-current-path">/</strong>
+        </div>
+        <div class="row">
+          <button id="picker-up-btn">Вверх</button>
+          <button id="picker-select-btn">Выбрать текущий</button>
+          <button id="picker-close-btn">Закрыть</button>
+        </div>
+        <ul id="picker-list" class="list"></ul>
       </div>
       <div class="row">
         <button id="start-scan-btn" disabled>Старт сканера</button>

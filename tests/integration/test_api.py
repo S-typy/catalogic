@@ -71,3 +71,24 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
     groups = dups.json()["groups"]
     assert groups
     assert groups[0]["name"] == "dup.txt"
+
+
+def test_api_fs_list_dirs(tmp_path: Path) -> None:
+    root = tmp_path / "browse"
+    (root / "alpha").mkdir(parents=True)
+    (root / "beta").mkdir(parents=True)
+
+    db_path = tmp_path / "catalogic.db"
+    app = create_app(db_path=str(db_path), frontend_port=8081, browse_root=str(root))
+    client = TestClient(app)
+
+    top = client.get("/api/fs/list-dirs")
+    assert top.status_code == 200
+    payload = top.json()
+    assert payload["current_path"] == str(root.resolve())
+    names = [item["name"] for item in payload["dirs"]]
+    assert names == ["alpha", "beta"]
+
+    child = client.get("/api/fs/list-dirs", params={"path": str((root / "alpha").resolve())})
+    assert child.status_code == 200
+    assert child.json()["current_path"] == str((root / "alpha").resolve())

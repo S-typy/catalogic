@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -22,6 +23,18 @@ class ScanStartRequest(BaseModel):
 
 def create_api_router() -> APIRouter:
     router = APIRouter(prefix="/api")
+
+    def _resolve_inside_root(raw_path: str | None, browse_root: str) -> tuple[Path, Path]:
+        root = Path(browse_root).expanduser().resolve()
+        if raw_path:
+            candidate = Path(raw_path).expanduser().resolve()
+        else:
+            candidate = root
+        try:
+            candidate.relative_to(root)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="Path is outside browse root") from e
+        return root, candidate
 
     @router.get("/health")
     def health() -> dict[str, str]:
@@ -88,6 +101,40 @@ def create_api_router() -> APIRouter:
             "worker_last_seen": status.get("worker_last_seen"),
             "worker_pid": status.get("worker_pid"),
             "worker_host": status.get("worker_host"),
+        }
+
+    @router.get("/fs/list-dirs")
+    def fs_list_dirs(
+        request: Request,
+        path: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        browse_root = str(request.app.state.browse_root)
+        root, current = _resolve_inside_root(path, browse_root)
+        if not current.is_dir():
+            raise HTTPException(status_code=400, detail="Path is not a directory")
+
+        dirs: list[dict[str, str]] = []
+        try:
+            for entry in current.iterdir():
+                if entry.is_dir():
+                    dirs.append({"name": entry.name, "path": str(entry.resolve())})
+        except OSError as e:
+            raise HTTPException(status_code=400, detail=f"Cannot list directory: {e}") from e
+        dirs.sort(key=lambda item: item["name"].lower())
+
+        parent_path: str | None
+        if current == root:
+            parent_path = None
+        else:
+            parent = current.parent.resolve()
+            parent.relative_to(root)
+            parent_path = str(parent)
+
+        return {
+            "browse_root": str(root),
+            "current_path": str(current),
+            "parent_path": parent_path,
+            "dirs": dirs,
         }
 
     @router.get("/tree")

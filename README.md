@@ -30,6 +30,9 @@ catalogic-frontend
 cp .env.example .env
 ```
 
+Во вкладке `Настройки` доступна кнопка `Выбрать каталог` (server-side directory picker).
+Ограничение области просмотра задаётся переменной `CATALOGIC_BROWSE_ROOT` в `.env`.
+
 One-command installer (Linux/systemd):
 
 ```bash

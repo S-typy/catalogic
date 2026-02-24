@@ -87,6 +87,10 @@ button {
   padding-left: 18px;
 }
 
+.list button {
+  margin-left: 6px;
+}
+
 .box {
   background: #fff;
   border: 1px solid #bcccdc;

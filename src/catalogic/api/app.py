@@ -14,10 +14,11 @@ from catalogic.api.routes import create_api_router
 from catalogic.storage import open_sqlite_storage
 
 
-def create_app(*, db_path: str, frontend_port: int) -> FastAPI:
+def create_app(*, db_path: str, frontend_port: int, browse_root: str = "/") -> FastAPI:
     app = FastAPI(title="Catalogic STEP1 API", version="0.1.0")
     app.state.db_path = db_path
     app.state.frontend_port = frontend_port
+    app.state.browse_root = browse_root
     app.state.scanner = ScannerService(db_path)
 
     storage = open_sqlite_storage(db_path, migrate=True)

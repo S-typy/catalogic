@@ -10,7 +10,11 @@ from catalogic.config import load_settings
 
 def main() -> None:
     settings = load_settings()
-    app = create_app(db_path=settings.db_path, frontend_port=settings.frontend_port)
+    app = create_app(
+        db_path=settings.db_path,
+        frontend_port=settings.frontend_port,
+        browse_root=settings.browse_root,
+    )
     uvicorn.run(app, host=settings.host, port=settings.port)
 
 
