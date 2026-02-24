@@ -80,6 +80,8 @@ def test_sqlite_list_directory_children(tmp_path: Path) -> None:
             dir_path=str(data_root),
         )
         assert [item["name"] for item in top] == ["nested", "a.txt"]
+        top_file = next(item for item in top if item["type"] == "file")
+        assert isinstance(top_file["mtime"], float)
 
         nested_children = storage.files.list_directory_children(
             root_id=root.id,
@@ -87,5 +89,6 @@ def test_sqlite_list_directory_children(tmp_path: Path) -> None:
             dir_path=str(nested),
         )
         assert [item["name"] for item in nested_children] == ["b.txt", "c.txt"]
+        assert all(isinstance(item["mtime"], float) for item in nested_children)
     finally:
         storage.close()

@@ -278,7 +278,7 @@ class SQLiteFileRepository(FileRepository):
         escaped_prefix = _escape_like(dir_prefix)
         cur = self._conn.execute(
             """
-            SELECT path, size
+            SELECT path, size, mtime
             FROM files
             WHERE root_id = ? AND path LIKE ? ESCAPE '\\'
             ORDER BY path
@@ -306,6 +306,7 @@ class SQLiteFileRepository(FileRepository):
                     "path": file_path,
                     "type": "file",
                     "size": int(row["size"]),
+                    "mtime": float(row["mtime"]),
                 }
                 continue
 

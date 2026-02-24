@@ -1,6 +1,11 @@
 const $ = (id) => document.getElementById(id);
 const API_BASE = window.CATALOGIC_API_BASE || "";
+
 let pickerCurrentPath = null;
+const treeCache = new Map();
+let selectedDirKey = null;
+let currentFiles = [];
+const fileSort = { key: "name", direction: "asc" };
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -23,6 +28,270 @@ function switchTab(tabId) {
   });
 }
 
+function treeKey(rootId, path) {
+  return `${String(rootId)}:${path}`;
+}
+
+function formatSize(size) {
+  const value = Number(size);
+  if (!Number.isFinite(value) || value < 0) return "?";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function formatDateTime(epochSec) {
+  const value = Number(epochSec);
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  const date = new Date(value * 1000);
+  return date.toLocaleString();
+}
+
+function splitChildren(payload) {
+  if (Array.isArray(payload.children)) {
+    return {
+      dirs: payload.children.filter((item) => item.type === "dir"),
+      files: payload.children.filter((item) => item.type === "file"),
+    };
+  }
+  return { dirs: [], files: [] };
+}
+
+async function getDirData(rootId, dirPath, force = false) {
+  const key = treeKey(rootId, dirPath);
+  if (!force && treeCache.has(key)) {
+    return treeCache.get(key);
+  }
+
+  const query = new URLSearchParams({
+    root_id: String(rootId),
+    dir_path: dirPath,
+  });
+  const payload = await api(`/api/tree/children?${query.toString()}`);
+  const split = splitChildren(payload);
+  const data = {
+    dirPath: payload.dir_path || dirPath,
+    dirs: split.dirs,
+    files: split.files,
+  };
+  treeCache.set(key, data);
+  return data;
+}
+
+function refreshDirectorySelectionHighlight() {
+  document.querySelectorAll(".tree-name").forEach((node) => {
+    const key = node.dataset.dirKey;
+    node.classList.toggle("selected", key === selectedDirKey);
+  });
+}
+
+function sortedFiles(files) {
+  const key = fileSort.key;
+  const dir = fileSort.direction === "asc" ? 1 : -1;
+  const sorted = [...files];
+  sorted.sort((a, b) => {
+    if (key === "size") {
+      const av = Number.isFinite(Number(a.size)) ? Number(a.size) : -1;
+      const bv = Number.isFinite(Number(b.size)) ? Number(b.size) : -1;
+      return (av - bv) * dir;
+    }
+    if (key === "mtime") {
+      const av = Number.isFinite(Number(a.mtime)) ? Number(a.mtime) : -1;
+      const bv = Number.isFinite(Number(b.mtime)) ? Number(b.mtime) : -1;
+      return (av - bv) * dir;
+    }
+    return String(a.name || "").localeCompare(String(b.name || ""), "ru", { sensitivity: "base" }) * dir;
+  });
+  return sorted;
+}
+
+function updateSortButtons() {
+  const labels = {
+    name: "Имя",
+    size: "Размер",
+    mtime: "Дата изменения",
+  };
+  const arrow = fileSort.direction === "asc" ? "↑" : "↓";
+  $("sort-name-btn").textContent = `${labels.name}${fileSort.key === "name" ? ` ${arrow}` : ""}`;
+  $("sort-size-btn").textContent = `${labels.size}${fileSort.key === "size" ? ` ${arrow}` : ""}`;
+  $("sort-mtime-btn").textContent = `${labels.mtime}${fileSort.key === "mtime" ? ` ${arrow}` : ""}`;
+}
+
+function renderFilesTable() {
+  const body = $("files-table-body");
+  body.innerHTML = "";
+
+  const rows = sortedFiles(currentFiles);
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 3;
+    td.textContent = "Файлы в каталоге не найдены.";
+    tr.appendChild(td);
+    body.appendChild(tr);
+    updateSortButtons();
+    return;
+  }
+
+  rows.forEach((item) => {
+    const tr = document.createElement("tr");
+
+    const name = document.createElement("td");
+    name.textContent = item.name;
+    tr.appendChild(name);
+
+    const size = document.createElement("td");
+    size.textContent = formatSize(item.size);
+    tr.appendChild(size);
+
+    const mtime = document.createElement("td");
+    mtime.textContent = formatDateTime(item.mtime);
+    tr.appendChild(mtime);
+
+    body.appendChild(tr);
+  });
+  updateSortButtons();
+}
+
+function setFileSort(key) {
+  if (fileSort.key === key) {
+    fileSort.direction = fileSort.direction === "asc" ? "desc" : "asc";
+  } else {
+    fileSort.key = key;
+    fileSort.direction = "asc";
+  }
+  renderFilesTable();
+}
+
+async function selectDirectory(rootId, dirPath, title) {
+  const data = await getDirData(rootId, dirPath);
+  selectedDirKey = treeKey(rootId, dirPath);
+  currentFiles = data.files || [];
+  $("files-title").textContent = `Файлы: ${title || dirPath}`;
+  renderFilesTable();
+  refreshDirectorySelectionHighlight();
+}
+
+function createDirNode(item, rootId) {
+  const wrapper = document.createElement("div");
+
+  const row = document.createElement("div");
+  row.className = "tree-node";
+  wrapper.appendChild(row);
+
+  const toggle = document.createElement("button");
+  toggle.textContent = ">";
+  row.appendChild(toggle);
+
+  const name = document.createElement("span");
+  name.className = "tree-name";
+  name.dataset.dirKey = treeKey(rootId, item.path);
+  name.textContent = item.name;
+  row.appendChild(name);
+
+  const children = document.createElement("div");
+  children.className = "tree-children hidden";
+  wrapper.appendChild(children);
+
+  let loaded = false;
+  let expanded = false;
+
+  const expand = async () => {
+    if (!loaded) {
+      toggle.disabled = true;
+      try {
+        const data = await getDirData(rootId, item.path);
+        children.innerHTML = "";
+        const dirs = data.dirs || [];
+        if (!dirs.length) {
+          toggle.disabled = true;
+          toggle.textContent = "·";
+          loaded = true;
+          return;
+        }
+        dirs.forEach((dir) => children.appendChild(createDirNode(dir, rootId)));
+        loaded = true;
+      } finally {
+        if (toggle.textContent !== "·") {
+          toggle.disabled = false;
+        }
+      }
+    }
+    expanded = !expanded;
+    children.classList.toggle("hidden", !expanded);
+    toggle.textContent = expanded ? "v" : ">";
+  };
+
+  toggle.onclick = () => {
+    if (toggle.textContent === "·") return;
+    expand().catch((err) => alert(`Load tree node failed: ${err.message}`));
+  };
+
+  name.onclick = () => {
+    selectDirectory(rootId, item.path, item.path).catch((err) => {
+      alert(`Open directory failed: ${err.message}`);
+    });
+  };
+
+  return wrapper;
+}
+
+async function refreshTree() {
+  const roots = await api("/api/roots");
+  treeCache.clear();
+  selectedDirKey = null;
+  currentFiles = [];
+  $("files-title").textContent = "Файлы";
+  renderFilesTable();
+
+  const container = $("tree-result");
+  container.innerHTML = "";
+  if (!roots.length) {
+    container.textContent = "Нет добавленных путей сканирования.";
+    return;
+  }
+
+  roots.forEach((root) => {
+    const rootNode = createDirNode(
+      {
+        name: `[${root.id}] ${root.path}`,
+        path: root.path,
+        type: "dir",
+      },
+      root.id
+    );
+    container.appendChild(rootNode);
+  });
+}
+
+async function runTreeSearch() {
+  const pattern = $("tree-search-input").value.trim();
+  if (!pattern) return;
+  const data = await api(`/api/search?pattern=${encodeURIComponent(pattern)}`);
+  const box = $("tree-search-result");
+  box.innerHTML = "";
+  const items = data.items || [];
+  if (!items.length) {
+    box.textContent = "Ничего не найдено.";
+    return;
+  }
+
+  const ul = document.createElement("ul");
+  ul.className = "search-list";
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = `${item.path} (${formatSize(item.size)})`;
+    ul.appendChild(li);
+  });
+  box.appendChild(ul);
+}
+
+async function refreshDuplicates() {
+  const data = await api("/api/duplicates");
+  $("dups-result").textContent = JSON.stringify(data, null, 2);
+}
+
 async function refreshRoots() {
   const roots = await api("/api/roots");
   const ul = $("roots-list");
@@ -35,6 +304,7 @@ async function refreshRoots() {
     del.onclick = async () => {
       await api(`/api/roots/${root.id}`, { method: "DELETE" });
       await refreshRoots();
+      await refreshTree();
     };
     li.appendChild(del);
     ul.appendChild(li);
@@ -94,153 +364,14 @@ async function refreshStatus() {
   warning.classList.toggle("hidden", workerAlive);
 }
 
-function formatSize(size) {
-  const value = Number(size);
-  if (!Number.isFinite(value) || value < 0) return "?";
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function createFileNode(item) {
-  const row = document.createElement("div");
-  row.className = "tree-node";
-
-  const spacer = document.createElement("span");
-  spacer.textContent = " ";
-  spacer.style.display = "inline-block";
-  spacer.style.width = "26px";
-  row.appendChild(spacer);
-
-  const label = document.createElement("span");
-  label.textContent = `${item.name} (${formatSize(item.size)})`;
-  row.appendChild(label);
-  return row;
-}
-
-function renderTreeChildren(container, items, rootId) {
-  container.innerHTML = "";
-  if (!items.length) {
-    const empty = document.createElement("div");
-    empty.textContent = "Пусто";
-    container.appendChild(empty);
-    return;
-  }
-
-  items.forEach((item) => {
-    if (item.type === "dir") {
-      container.appendChild(createDirNode(item, rootId));
-      return;
-    }
-    container.appendChild(createFileNode(item));
-  });
-}
-
-function createDirNode(item, rootId) {
-  const wrapper = document.createElement("div");
-
-  const row = document.createElement("div");
-  row.className = "tree-node";
-  wrapper.appendChild(row);
-
-  const toggle = document.createElement("button");
-  toggle.textContent = ">";
-  row.appendChild(toggle);
-
-  const name = document.createElement("span");
-  name.className = "tree-name";
-  name.textContent = item.name;
-  row.appendChild(name);
-
-  const children = document.createElement("div");
-  children.className = "tree-children hidden";
-  wrapper.appendChild(children);
-
-  let loaded = false;
-  let expanded = false;
-
-  const toggleOpen = async () => {
-    if (!loaded) {
-      toggle.disabled = true;
-      try {
-        const query = new URLSearchParams({
-          root_id: String(rootId),
-          dir_path: item.path,
-        });
-        const data = await api(`/api/tree/children?${query.toString()}`);
-        renderTreeChildren(children, data.children || [], rootId);
-        loaded = true;
-      } finally {
-        toggle.disabled = false;
-      }
-    }
-    expanded = !expanded;
-    children.classList.toggle("hidden", !expanded);
-    toggle.textContent = expanded ? "v" : ">";
-  };
-
-  toggle.onclick = () => {
-    toggleOpen().catch((err) => alert(`Load tree node failed: ${err.message}`));
-  };
-  name.onclick = toggle.onclick;
-
-  return wrapper;
-}
-
-async function refreshTree() {
-  const roots = await api("/api/roots");
-  const container = $("tree-result");
-  container.innerHTML = "";
-  if (!roots.length) {
-    container.textContent = "Нет добавленных путей сканирования.";
-    return;
-  }
-
-  roots.forEach((root) => {
-    const rootNode = createDirNode(
-      {
-        name: `[${root.id}] ${root.path}`,
-        path: root.path,
-        type: "dir",
-      },
-      root.id
-    );
-    container.appendChild(rootNode);
-  });
-}
-
-async function runTreeSearch() {
-  const pattern = $("tree-search-input").value.trim();
-  if (!pattern) return;
-  const data = await api(`/api/search?pattern=${encodeURIComponent(pattern)}`);
-  const box = $("tree-search-result");
-  box.innerHTML = "";
-  const items = data.items || [];
-  if (!items.length) {
-    box.textContent = "Ничего не найдено.";
-    return;
-  }
-
-  const ul = document.createElement("ul");
-  ul.className = "search-list";
-  items.forEach((item) => {
-    const li = document.createElement("li");
-    li.textContent = `${item.path} (${formatSize(item.size)})`;
-    ul.appendChild(li);
-  });
-  box.appendChild(ul);
-}
-
-async function refreshDuplicates() {
-  const data = await api("/api/duplicates");
-  $("dups-result").textContent = JSON.stringify(data, null, 2);
-}
-
 function bindActions() {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.onclick = () => switchTab(tab.dataset.tab);
   });
+
+  $("sort-name-btn").onclick = () => setFileSort("name");
+  $("sort-size-btn").onclick = () => setFileSort("size");
+  $("sort-mtime-btn").onclick = () => setFileSort("mtime");
 
   $("add-root-btn").onclick = async () => {
     const path = $("root-input").value.trim();
@@ -251,6 +382,7 @@ function bindActions() {
     });
     $("root-input").value = "";
     await refreshRoots();
+    await refreshTree();
   };
 
   $("open-picker-btn").onclick = async () => {
@@ -261,6 +393,7 @@ function bindActions() {
       alert(`Directory picker failed: ${err.message}`);
     }
   };
+
   $("picker-close-btn").onclick = closeDirPicker;
   $("picker-select-btn").onclick = () => {
     if (pickerCurrentPath) {
@@ -297,6 +430,7 @@ function bindActions() {
       alert(`Refresh tree failed: ${err.message}`);
     }
   };
+
   $("tree-search-btn").onclick = async () => {
     try {
       await runTreeSearch();
@@ -304,11 +438,13 @@ function bindActions() {
       alert(`Search failed: ${err.message}`);
     }
   };
+
   $("dups-refresh-btn").onclick = refreshDuplicates;
 }
 
 async function bootstrap() {
   bindActions();
+  updateSortButtons();
   await refreshRoots();
   await refreshStatus();
   await refreshTree();

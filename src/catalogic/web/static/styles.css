@@ -102,7 +102,7 @@ button {
 
 .tree-box {
   font-family: Menlo, Consolas, monospace;
-  min-height: 320px;
+  min-height: 420px;
 }
 
 .tree-node {
@@ -125,6 +125,12 @@ button {
   cursor: pointer;
 }
 
+.tree-name.selected {
+  background: #dbeafe;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
 .search-list {
   list-style: none;
   margin: 0;
@@ -134,4 +140,52 @@ button {
 .search-list li {
   border-bottom: 1px solid #e5e8ee;
   padding: 6px 0;
+}
+
+.browser-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.browser-pane h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.files-box {
+  min-height: 420px;
+}
+
+.files-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.files-table th,
+.files-table td {
+  text-align: left;
+  border-bottom: 1px solid #e5e8ee;
+  padding: 8px 6px;
+  vertical-align: top;
+}
+
+.files-table th button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0;
+}
+
+.files-table td:nth-child(2),
+.files-table td:nth-child(3) {
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .browser-layout {
+    grid-template-columns: 1fr;
+  }
 }

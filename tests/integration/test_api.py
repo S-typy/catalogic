@@ -74,6 +74,7 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
     assert tree_a.status_code == 200
     a_children = tree_a.json()["children"]
     assert [item["name"] for item in a_children] == ["dup.txt", "single.md"]
+    assert all(isinstance(item["mtime"], float) for item in a_children)
 
     search = client.get("/api/search", params={"pattern": "*.txt"})
     assert search.status_code == 200

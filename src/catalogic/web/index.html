@@ -54,7 +54,31 @@
         <button id="tree-search-btn">Искать</button>
         <button id="tree-refresh-btn">Обновить дерево</button>
       </div>
-      <div id="tree-result" class="box tree-box"></div>
+      <div class="browser-layout">
+        <div class="browser-pane">
+          <h3>Каталоги</h3>
+          <div id="tree-result" class="box tree-box"></div>
+        </div>
+        <div class="browser-pane">
+          <h3 id="files-title">Файлы</h3>
+          <div class="box files-box">
+            <table class="files-table">
+              <thead>
+                <tr>
+                  <th><button id="sort-name-btn" type="button">Имя</button></th>
+                  <th><button id="sort-size-btn" type="button">Размер</button></th>
+                  <th><button id="sort-mtime-btn" type="button">Дата изменения</button></th>
+                </tr>
+              </thead>
+              <tbody id="files-table-body">
+                <tr>
+                  <td colspan="3">Выберите каталог слева.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <div id="tree-search-result" class="box"></div>
     </section>
 
