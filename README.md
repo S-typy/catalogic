@@ -24,6 +24,12 @@ catalogic-frontend
 
 `scan/start` через API доступен только если `catalogic-scanner` отправляет heartbeat.
 
+Перед установкой настрой `.env` (можно начать с `.env.example`):
+
+```bash
+cp .env.example .env
+```
+
 One-command installer (Linux/systemd):
 
 ```bash
