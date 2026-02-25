@@ -3,6 +3,12 @@ const API_BASE = window.CATALOGIC_API_BASE || "";
 const LEFT_PANEL_WIDTH_STORAGE_KEY = "catalogic_tree_left_panel_width";
 const DETAILS_PANEL_WIDTH_STORAGE_KEY = "catalogic_tree_details_panel_width";
 const LANG_STORAGE_KEY = "catalogic_ui_language";
+const PREVIEW_AUTOSTART_STORAGE_KEY = "catalogic_preview_autostart";
+const VIDEO_VIEWER_PAN_START_DISTANCE = 5;
+const VIDEO_VIEWER_CONTROLS_ZONE_MIN_HEIGHT = 44;
+const VIDEO_VIEWER_CONTROLS_ZONE_MAX_HEIGHT = 78;
+const VIDEO_VIEWER_CONTROLS_ZONE_HEIGHT_RATIO = 0.07;
+const VIDEO_VIEWER_CONTROLS_ZONE_EXTRA_TOP = 6;
 
 const I18N = {
   ru: {
@@ -28,6 +34,7 @@ const I18N = {
     scan_mode_add_new: "Добавление новых",
     scan_mode_rebuild: "Пересоздание базы",
     follow_symlinks_label: "Следовать symlink-директориям:",
+    preview_autostart_label: "Автостарт превью видео:",
     scanner_controls_label: "Управление сканером:",
     start_scan_btn: "Старт сканера",
     stop_scan_btn: "Стоп сканера",
@@ -87,9 +94,26 @@ const I18N = {
     file_preview_not_available: "Превью недоступно для этого типа файла.",
     file_preview_failed: "Не удалось загрузить превью файла.",
     file_preview_video_seek_hint: "Перемотка перезапускает поток с выбранного момента.",
+    viewer_btn_100: "100%",
+    viewer_btn_fit: "По экрану",
+    viewer_btn_fragment: "Фрагмент",
+    viewer_btn_close: "Закрыть",
+    viewer_fragment_mode_on: "Режим выделения: включен",
+    viewer_fragment_mode_off: "Режим выделения: выключен",
+    viewer_status_scale: "Масштаб: {percent}%",
+    viewer_status_scale_fragment: "Масштаб: {percent}% | выделение",
+    viewer_open_failed: "Не удалось открыть просмотрщик: {message}",
+    video_viewer_btn_close: "Закрыть",
+    video_viewer_status_loading: "Открытие видео...",
+    video_viewer_status_ready: "Готово к воспроизведению",
+    video_viewer_status_fallback: "Исходный формат не поддержан браузером, включен поток preview",
+    video_viewer_status_error: "Не удалось загрузить видео",
     file_details_video_meta: "Метаданные видео",
     file_details_audio_meta: "Метаданные аудио",
     file_details_image_meta: "Метаданные изображения",
+    parent_dir_name: "..",
+    dir_selected: "Выбран каталог: {path}",
+    up_dir_selected: "Переход на уровень выше: {path}",
     choose_dir_first: "Сначала выберите каталог в дереве.",
     already_in_root: "Вы уже в корневом каталоге.",
     file_selected: "Выбран файл: {path}",
@@ -150,6 +174,7 @@ const I18N = {
     scan_mode_add_new: "Add new",
     scan_mode_rebuild: "Rebuild database",
     follow_symlinks_label: "Follow symlink directories:",
+    preview_autostart_label: "Autostart video preview:",
     scanner_controls_label: "Scanner controls:",
     start_scan_btn: "Start scanner",
     stop_scan_btn: "Stop scanner",
@@ -209,9 +234,26 @@ const I18N = {
     file_preview_not_available: "Preview is not available for this file type.",
     file_preview_failed: "Failed to load file preview.",
     file_preview_video_seek_hint: "Seeking reloads the stream from selected position.",
+    viewer_btn_100: "100%",
+    viewer_btn_fit: "Fit",
+    viewer_btn_fragment: "Fragment",
+    viewer_btn_close: "Close",
+    viewer_fragment_mode_on: "Selection mode: enabled",
+    viewer_fragment_mode_off: "Selection mode: disabled",
+    viewer_status_scale: "Zoom: {percent}%",
+    viewer_status_scale_fragment: "Zoom: {percent}% | selection",
+    viewer_open_failed: "Failed to open viewer: {message}",
+    video_viewer_btn_close: "Close",
+    video_viewer_status_loading: "Opening video...",
+    video_viewer_status_ready: "Ready to play",
+    video_viewer_status_fallback: "Source format is not supported by browser, preview stream enabled",
+    video_viewer_status_error: "Failed to load video",
     file_details_video_meta: "Video metadata",
     file_details_audio_meta: "Audio metadata",
     file_details_image_meta: "Image metadata",
+    parent_dir_name: "..",
+    dir_selected: "Selected directory: {path}",
+    up_dir_selected: "Navigate up: {path}",
     choose_dir_first: "Select a directory in the tree first.",
     already_in_root: "You are already at the root directory.",
     file_selected: "Selected file: {path}",
@@ -256,10 +298,56 @@ const treeCache = new Map();
 const fileDetailsCache = new Map();
 let selectedDirKey = null;
 let selectedDirContext = null;
-let selectedFilePath = null;
+let selectedRowPath = null;
+let selectedRowType = null;
 let currentFiles = [];
 const fileSort = { key: "name", direction: "asc" };
 let currentLang = "ru";
+let previewAutostart = false;
+const imageViewerState = {
+  open: false,
+  rootId: null,
+  path: null,
+  naturalWidth: 0,
+  naturalHeight: 0,
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0,
+  fragmentMode: false,
+  pendingPan: false,
+  dragging: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  dragOriginOffsetX: 0,
+  dragOriginOffsetY: 0,
+  selecting: false,
+  selectStartX: 0,
+  selectStartY: 0,
+};
+const videoViewerState = {
+  open: false,
+  rootId: null,
+  path: null,
+  naturalWidth: 0,
+  naturalHeight: 0,
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0,
+  fragmentMode: false,
+  dragging: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  dragOriginOffsetX: 0,
+  dragOriginOffsetY: 0,
+  selecting: false,
+  selectStartX: 0,
+  selectStartY: 0,
+  statusNote: "",
+  hasInitialLayout: false,
+  fallbackUsed: false,
+  fallbackReloading: false,
+  fallbackSkipNextSeeking: false,
+};
 
 function t(key, vars = {}) {
   const dict = I18N[currentLang] || I18N.ru;
@@ -388,6 +476,40 @@ function setLanguage(lang) {
   }
   applyI18nToDocument();
   updateFilesTitle();
+  if (imageViewerState.open) {
+    updateImageViewerStatus();
+  }
+  if (videoViewerState.open) {
+    updateVideoViewerStatus();
+  }
+}
+
+function readPreviewAutostartSetting() {
+  const raw = String(window.localStorage.getItem(PREVIEW_AUTOSTART_STORAGE_KEY) || "").toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function applyPreviewAutostartSetting(value, { persist = true, rerender = true } = {}) {
+  previewAutostart = Boolean(value);
+  if (persist) {
+    window.localStorage.setItem(PREVIEW_AUTOSTART_STORAGE_KEY, previewAutostart ? "1" : "0");
+  }
+  const checkbox = $("preview-autostart-input");
+  if (checkbox) {
+    checkbox.checked = previewAutostart;
+  }
+  if (!rerender || !selectedDirContext || !selectedRowPath || selectedRowType !== "file") {
+    return;
+  }
+  const key = `${String(selectedDirContext.rootId)}:${selectedRowPath}`;
+  const cached = fileDetailsCache.get(key);
+  if (cached) {
+    renderFileDetails(cached);
+    return;
+  }
+  loadAndRenderFileDetails(selectedDirContext.rootId, selectedRowPath).catch(() => {
+    setFileDetailsPlaceholder(t("file_details_error"));
+  });
 }
 
 function updateFilesTitle() {
@@ -742,7 +864,19 @@ function sortedFiles(files) {
   const key = fileSort.key;
   const dir = fileSort.direction === "asc" ? 1 : -1;
   const sorted = [...files];
+  const rank = (item) => {
+    if (isUpRow(item)) return 0;
+    if (isDirRow(item)) return 1;
+    return 2;
+  };
   sorted.sort((a, b) => {
+    const rankDiff = rank(a) - rank(b);
+    if (rankDiff !== 0) {
+      return rankDiff;
+    }
+    if (isUpRow(a) && isUpRow(b)) {
+      return 0;
+    }
     if (key === "size") {
       const av = Number.isFinite(Number(a.size)) ? Number(a.size) : -1;
       const bv = Number.isFinite(Number(b.size)) ? Number(b.size) : -1;
@@ -777,6 +911,918 @@ function toMetaText(meta) {
     return t("na");
   }
   return JSON.stringify(meta, null, 2);
+}
+
+function isUpRow(item) {
+  return item && item.type === "up";
+}
+
+function isDirRow(item) {
+  return item && item.type === "dir";
+}
+
+function isFileRow(item) {
+  return item && item.type === "file";
+}
+
+function getSelectedRow() {
+  if (!selectedRowPath || !selectedRowType) {
+    return null;
+  }
+  return (
+    currentFiles.find((item) => item.path === selectedRowPath && item.type === selectedRowType) || null
+  );
+}
+
+function setSelectionFromRow(item) {
+  if (!item) {
+    selectedRowPath = null;
+    selectedRowType = null;
+    return;
+  }
+  selectedRowPath = item.path;
+  selectedRowType = item.type;
+}
+
+function selectionInfoForRow(item) {
+  if (isFileRow(item)) {
+    return t("file_selected", { path: item.path });
+  }
+  if (isUpRow(item)) {
+    return t("up_dir_selected", { path: item.path });
+  }
+  if (isDirRow(item)) {
+    return t("dir_selected", { path: item.path });
+  }
+  return t("files_selection_default");
+}
+
+function isImageMime(mime) {
+  return String(mime || "").toLowerCase().startsWith("image/");
+}
+
+function isVideoMime(mime) {
+  return String(mime || "").toLowerCase().startsWith("video/");
+}
+
+function isImageName(name) {
+  return /\.(jpg|jpeg|png|webp|gif|bmp|tif|tiff|avif|heic|heif)$/i.test(String(name || ""));
+}
+
+function isVideoName(name) {
+  return /\.(mp4|mkv|avi|mov|webm|m4v|ts|m2ts|mpeg|mpg|wmv|flv)$/i.test(String(name || ""));
+}
+
+function updateImageViewerStatus() {
+  const status = $("viewer-status");
+  const fragmentBtn = $("viewer-fragment-btn");
+  const canvas = $("image-viewer-canvas");
+  if (!status || !fragmentBtn || !canvas) {
+    return;
+  }
+  const percent = Math.round((Number(imageViewerState.scale) || 1) * 100);
+  status.textContent = imageViewerState.fragmentMode
+    ? t("viewer_status_scale_fragment", { percent })
+    : t("viewer_status_scale", { percent });
+  fragmentBtn.classList.toggle("active", imageViewerState.fragmentMode);
+  canvas.classList.toggle("fragment-mode", imageViewerState.fragmentMode);
+  canvas.classList.toggle("panning", imageViewerState.dragging);
+}
+
+function renderImageViewerTransform() {
+  const img = $("image-viewer-img");
+  if (!img) {
+    return;
+  }
+  img.style.transform = `translate(${imageViewerState.offsetX}px, ${imageViewerState.offsetY}px) scale(${imageViewerState.scale})`;
+  updateImageViewerStatus();
+}
+
+function getImageViewerCanvasSize() {
+  const canvas = $("image-viewer-canvas");
+  if (!canvas) {
+    return { width: 0, height: 0 };
+  }
+  return { width: canvas.clientWidth, height: canvas.clientHeight };
+}
+
+function getImageViewerFitScale() {
+  const { naturalWidth, naturalHeight } = imageViewerState;
+  const { width, height } = getImageViewerCanvasSize();
+  if (!naturalWidth || !naturalHeight || !width || !height) {
+    return 1;
+  }
+  return Math.min(width / naturalWidth, height / naturalHeight);
+}
+
+function applyImageViewerScale(newScale, anchorX = null, anchorY = null) {
+  const { width, height } = getImageViewerCanvasSize();
+  if (!width || !height) {
+    return;
+  }
+  const minScale = Math.min(0.02, getImageViewerFitScale());
+  const maxScale = 20;
+  const nextScale = Math.min(Math.max(newScale, minScale), maxScale);
+  const oldScale = imageViewerState.scale || 1;
+  const ax = anchorX ?? width / 2;
+  const ay = anchorY ?? height / 2;
+  imageViewerState.offsetX = ax - ((ax - imageViewerState.offsetX) * nextScale) / oldScale;
+  imageViewerState.offsetY = ay - ((ay - imageViewerState.offsetY) * nextScale) / oldScale;
+  imageViewerState.scale = nextScale;
+  renderImageViewerTransform();
+}
+
+function fitImageViewerToScreen() {
+  const { naturalWidth, naturalHeight } = imageViewerState;
+  const { width, height } = getImageViewerCanvasSize();
+  if (!naturalWidth || !naturalHeight || !width || !height) {
+    return;
+  }
+  imageViewerState.scale = getImageViewerFitScale();
+  imageViewerState.offsetX = (width - naturalWidth * imageViewerState.scale) / 2;
+  imageViewerState.offsetY = (height - naturalHeight * imageViewerState.scale) / 2;
+  renderImageViewerTransform();
+}
+
+function setImageViewerScale100() {
+  const { naturalWidth, naturalHeight } = imageViewerState;
+  const { width, height } = getImageViewerCanvasSize();
+  if (!naturalWidth || !naturalHeight || !width || !height) {
+    return;
+  }
+  imageViewerState.scale = 1;
+  imageViewerState.offsetX = (width - naturalWidth) / 2;
+  imageViewerState.offsetY = (height - naturalHeight) / 2;
+  renderImageViewerTransform();
+}
+
+function setImageViewerFragmentMode(enabled) {
+  imageViewerState.fragmentMode = Boolean(enabled);
+  updateImageViewerStatus();
+}
+
+function hideImageViewerSelection() {
+  imageViewerState.selecting = false;
+  const selection = $("image-viewer-selection");
+  if (selection) {
+    selection.classList.add("hidden");
+  }
+}
+
+function zoomImageViewerToSelection(left, top, width, height) {
+  const { naturalWidth, naturalHeight, scale, offsetX, offsetY } = imageViewerState;
+  const { width: canvasWidth, height: canvasHeight } = getImageViewerCanvasSize();
+  if (!naturalWidth || !naturalHeight || !scale || !canvasWidth || !canvasHeight) {
+    return;
+  }
+  const x1 = Math.max(0, Math.min(naturalWidth, (left - offsetX) / scale));
+  const y1 = Math.max(0, Math.min(naturalHeight, (top - offsetY) / scale));
+  const x2 = Math.max(0, Math.min(naturalWidth, (left + width - offsetX) / scale));
+  const y2 = Math.max(0, Math.min(naturalHeight, (top + height - offsetY) / scale));
+  const selectedW = x2 - x1;
+  const selectedH = y2 - y1;
+  if (selectedW < 2 || selectedH < 2) {
+    return;
+  }
+
+  const nextScale = Math.min(canvasWidth / selectedW, canvasHeight / selectedH);
+  imageViewerState.scale = nextScale;
+  imageViewerState.offsetX = -x1 * nextScale + (canvasWidth - selectedW * nextScale) / 2;
+  imageViewerState.offsetY = -y1 * nextScale + (canvasHeight - selectedH * nextScale) / 2;
+  renderImageViewerTransform();
+}
+
+function updateVideoViewerStatus() {
+  const status = $("video-viewer-status");
+  const fragmentBtn = $("video-viewer-fragment-btn");
+  const canvas = $("video-viewer-canvas");
+  if (!status || !fragmentBtn || !canvas) {
+    return;
+  }
+  const percent = Math.round((Number(videoViewerState.scale) || 1) * 100);
+  const zoomText = videoViewerState.fragmentMode
+    ? t("viewer_status_scale_fragment", { percent })
+    : t("viewer_status_scale", { percent });
+  status.textContent = videoViewerState.statusNote
+    ? `${videoViewerState.statusNote} | ${zoomText}`
+    : zoomText;
+  fragmentBtn.classList.toggle("active", videoViewerState.fragmentMode);
+  canvas.classList.toggle("fragment-mode", videoViewerState.fragmentMode);
+  canvas.classList.toggle("panning", videoViewerState.dragging);
+}
+
+function renderVideoViewerTransform() {
+  const player = $("video-viewer-player");
+  if (!player) {
+    return;
+  }
+  player.style.transform = `translate(${videoViewerState.offsetX}px, ${videoViewerState.offsetY}px) scale(${videoViewerState.scale})`;
+  updateVideoViewerStatus();
+}
+
+function getVideoViewerCanvasSize() {
+  const canvas = $("video-viewer-canvas");
+  if (!canvas) {
+    return { width: 0, height: 0 };
+  }
+  return { width: canvas.clientWidth, height: canvas.clientHeight };
+}
+
+function getVideoViewerDisplayRect() {
+  const { naturalWidth, naturalHeight, scale, offsetX, offsetY } = videoViewerState;
+  if (!naturalWidth || !naturalHeight || !scale) {
+    return null;
+  }
+  return {
+    x: offsetX,
+    y: offsetY,
+    width: naturalWidth * scale,
+    height: naturalHeight * scale,
+  };
+}
+
+function isPointInVideoViewerControlZone(point) {
+  const rect = getVideoViewerDisplayRect();
+  if (!rect) {
+    return false;
+  }
+  const insideX = point.x >= rect.x && point.x <= rect.x + rect.width;
+  const insideY = point.y >= rect.y && point.y <= rect.y + rect.height;
+  if (!insideX || !insideY) {
+    return false;
+  }
+  const controlsBandHeight = Math.min(
+    VIDEO_VIEWER_CONTROLS_ZONE_MAX_HEIGHT,
+    Math.max(VIDEO_VIEWER_CONTROLS_ZONE_MIN_HEIGHT, rect.height * VIDEO_VIEWER_CONTROLS_ZONE_HEIGHT_RATIO)
+  );
+  const zoneTop = rect.y + rect.height - controlsBandHeight - VIDEO_VIEWER_CONTROLS_ZONE_EXTRA_TOP;
+  return point.y >= zoneTop;
+}
+
+function getVideoViewerFitScale() {
+  const { naturalWidth, naturalHeight } = videoViewerState;
+  const { width, height } = getVideoViewerCanvasSize();
+  if (!naturalWidth || !naturalHeight || !width || !height) {
+    return 1;
+  }
+  return Math.min(width / naturalWidth, height / naturalHeight);
+}
+
+function applyVideoViewerScale(newScale, anchorX = null, anchorY = null) {
+  const { width, height } = getVideoViewerCanvasSize();
+  if (!width || !height) {
+    return;
+  }
+  const minScale = Math.min(0.05, getVideoViewerFitScale());
+  const maxScale = 20;
+  const nextScale = Math.min(Math.max(newScale, minScale), maxScale);
+  const oldScale = videoViewerState.scale || 1;
+  const ax = anchorX ?? width / 2;
+  const ay = anchorY ?? height / 2;
+  videoViewerState.offsetX = ax - ((ax - videoViewerState.offsetX) * nextScale) / oldScale;
+  videoViewerState.offsetY = ay - ((ay - videoViewerState.offsetY) * nextScale) / oldScale;
+  videoViewerState.scale = nextScale;
+  renderVideoViewerTransform();
+}
+
+function fitVideoViewerToScreen() {
+  const { naturalWidth, naturalHeight } = videoViewerState;
+  const { width, height } = getVideoViewerCanvasSize();
+  if (!naturalWidth || !naturalHeight || !width || !height) {
+    return;
+  }
+  videoViewerState.scale = getVideoViewerFitScale();
+  videoViewerState.offsetX = (width - naturalWidth * videoViewerState.scale) / 2;
+  videoViewerState.offsetY = (height - naturalHeight * videoViewerState.scale) / 2;
+  renderVideoViewerTransform();
+}
+
+function setVideoViewerScale100() {
+  const { naturalWidth, naturalHeight } = videoViewerState;
+  const { width, height } = getVideoViewerCanvasSize();
+  if (!naturalWidth || !naturalHeight || !width || !height) {
+    return;
+  }
+  videoViewerState.scale = 1;
+  videoViewerState.offsetX = (width - naturalWidth) / 2;
+  videoViewerState.offsetY = (height - naturalHeight) / 2;
+  renderVideoViewerTransform();
+}
+
+function setVideoViewerFragmentMode(enabled) {
+  videoViewerState.fragmentMode = Boolean(enabled);
+  updateVideoViewerStatus();
+}
+
+function hideVideoViewerSelection() {
+  videoViewerState.selecting = false;
+  const selection = $("video-viewer-selection");
+  if (selection) {
+    selection.classList.add("hidden");
+  }
+}
+
+function zoomVideoViewerToSelection(left, top, width, height) {
+  const { naturalWidth, naturalHeight, scale, offsetX, offsetY } = videoViewerState;
+  const { width: canvasWidth, height: canvasHeight } = getVideoViewerCanvasSize();
+  if (!naturalWidth || !naturalHeight || !scale || !canvasWidth || !canvasHeight) {
+    return;
+  }
+  const x1 = Math.max(0, Math.min(naturalWidth, (left - offsetX) / scale));
+  const y1 = Math.max(0, Math.min(naturalHeight, (top - offsetY) / scale));
+  const x2 = Math.max(0, Math.min(naturalWidth, (left + width - offsetX) / scale));
+  const y2 = Math.max(0, Math.min(naturalHeight, (top + height - offsetY) / scale));
+  const selectedW = x2 - x1;
+  const selectedH = y2 - y1;
+  if (selectedW < 2 || selectedH < 2) {
+    return;
+  }
+  const nextScale = Math.min(canvasWidth / selectedW, canvasHeight / selectedH);
+  videoViewerState.scale = nextScale;
+  videoViewerState.offsetX = -x1 * nextScale + (canvasWidth - selectedW * nextScale) / 2;
+  videoViewerState.offsetY = -y1 * nextScale + (canvasHeight - selectedH * nextScale) / 2;
+  renderVideoViewerTransform();
+}
+
+function syncViewerBodyState() {
+  if (imageViewerState.open || videoViewerState.open) {
+    document.body.classList.add("viewer-open");
+  } else {
+    document.body.classList.remove("viewer-open");
+  }
+}
+
+function closeVideoViewer() {
+  const overlay = $("video-viewer-overlay");
+  const player = $("video-viewer-player");
+  const status = $("video-viewer-status");
+  const canvas = $("video-viewer-canvas");
+  if (!overlay || !player || !status) {
+    return;
+  }
+  videoViewerState.open = false;
+  videoViewerState.rootId = null;
+  videoViewerState.path = null;
+  videoViewerState.naturalWidth = 0;
+  videoViewerState.naturalHeight = 0;
+  videoViewerState.scale = 1;
+  videoViewerState.offsetX = 0;
+  videoViewerState.offsetY = 0;
+  videoViewerState.fragmentMode = false;
+  videoViewerState.pendingPan = false;
+  videoViewerState.dragging = false;
+  videoViewerState.statusNote = "";
+  videoViewerState.hasInitialLayout = false;
+  videoViewerState.fallbackUsed = false;
+  videoViewerState.fallbackReloading = false;
+  videoViewerState.fallbackSkipNextSeeking = false;
+  hideVideoViewerSelection();
+  player.pause();
+  player.onloadedmetadata = null;
+  player.onerror = null;
+  player.onseeking = null;
+  player.style.transform = "";
+  player.removeAttribute("src");
+  player.load();
+  status.textContent = "";
+  overlay.classList.add("hidden");
+  if (canvas) {
+    canvas.classList.remove("fragment-mode");
+    canvas.classList.remove("panning");
+  }
+  syncViewerBodyState();
+}
+
+function buildVideoViewerPreviewUrl(rootId, path, startSec) {
+  return buildApiUrl("/api/file/preview/video", {
+    root_id: rootId,
+    path,
+    start_sec: Number.isFinite(startSec) ? Number(startSec).toFixed(3) : "0.000",
+    width: 960,
+    video_bitrate_kbps: 1800,
+    audio_bitrate_kbps: 128,
+  });
+}
+
+function closeImageViewer() {
+  const overlay = $("image-viewer-overlay");
+  const img = $("image-viewer-img");
+  const canvas = $("image-viewer-canvas");
+  if (!overlay || !img || !canvas) {
+    return;
+  }
+  imageViewerState.open = false;
+  imageViewerState.path = null;
+  imageViewerState.rootId = null;
+  imageViewerState.naturalWidth = 0;
+  imageViewerState.naturalHeight = 0;
+  imageViewerState.scale = 1;
+  imageViewerState.offsetX = 0;
+  imageViewerState.offsetY = 0;
+  imageViewerState.fragmentMode = false;
+  imageViewerState.dragging = false;
+  hideImageViewerSelection();
+  overlay.classList.add("hidden");
+  canvas.classList.remove("fragment-mode");
+  canvas.classList.remove("panning");
+  img.onload = null;
+  img.onerror = null;
+  img.removeAttribute("src");
+  syncViewerBodyState();
+}
+
+function openImageViewer(rootId, path, name) {
+  if (videoViewerState.open) {
+    closeVideoViewer();
+  }
+  const overlay = $("image-viewer-overlay");
+  const img = $("image-viewer-img");
+  const status = $("viewer-status");
+  if (!overlay || !img || !status) {
+    throw new Error("Viewer controls are missing in DOM");
+  }
+  imageViewerState.open = true;
+  imageViewerState.rootId = Number(rootId);
+  imageViewerState.path = path;
+  imageViewerState.fragmentMode = false;
+  imageViewerState.dragging = false;
+  hideImageViewerSelection();
+  overlay.classList.remove("hidden");
+  syncViewerBodyState();
+  status.textContent = t("loading_file_details");
+  img.alt = name || path || "image";
+
+  img.onload = () => {
+    imageViewerState.naturalWidth = img.naturalWidth || 0;
+    imageViewerState.naturalHeight = img.naturalHeight || 0;
+    fitImageViewerToScreen();
+  };
+  img.onerror = () => {
+    status.textContent = t("file_preview_failed");
+  };
+  const src = buildApiUrl("/api/file/view/image", {
+    root_id: rootId,
+    path,
+    t: Date.now(),
+  });
+  img.src = src;
+}
+
+function openVideoViewer(rootId, path, name) {
+  if (imageViewerState.open) {
+    closeImageViewer();
+  }
+  const overlay = $("video-viewer-overlay");
+  const player = $("video-viewer-player");
+  const status = $("video-viewer-status");
+  if (!overlay || !player || !status) {
+    throw new Error("Video viewer controls are missing in DOM");
+  }
+  videoViewerState.open = true;
+  videoViewerState.rootId = Number(rootId);
+  videoViewerState.path = path;
+  videoViewerState.naturalWidth = 0;
+  videoViewerState.naturalHeight = 0;
+  videoViewerState.scale = 1;
+  videoViewerState.offsetX = 0;
+  videoViewerState.offsetY = 0;
+  videoViewerState.fragmentMode = false;
+  videoViewerState.pendingPan = false;
+  videoViewerState.dragging = false;
+  videoViewerState.statusNote = t("video_viewer_status_loading");
+  videoViewerState.hasInitialLayout = false;
+  videoViewerState.fallbackUsed = false;
+  videoViewerState.fallbackReloading = false;
+  videoViewerState.fallbackSkipNextSeeking = false;
+  hideVideoViewerSelection();
+  overlay.classList.remove("hidden");
+  syncViewerBodyState();
+  updateVideoViewerStatus();
+  player.title = name || path || "video";
+
+  const sourceUrl = buildApiUrl("/api/file/view/video", {
+    root_id: rootId,
+    path,
+    t: Date.now(),
+  });
+  const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0);
+
+  const restartFallbackFrom = (startSec, autoplay) => {
+    if (!videoViewerState.open || !videoViewerState.fallbackUsed) {
+      return;
+    }
+    videoViewerState.fallbackReloading = true;
+    videoViewerState.fallbackSkipNextSeeking = true;
+    player.src = buildVideoViewerPreviewUrl(rootId, path, startSec);
+    player.load();
+    player.addEventListener(
+      "loadedmetadata",
+      () => {
+        videoViewerState.fallbackReloading = false;
+        if (autoplay) {
+          void player.play().catch(() => {});
+        }
+      },
+      { once: true }
+    );
+    player.addEventListener(
+      "error",
+      () => {
+        videoViewerState.fallbackReloading = false;
+        videoViewerState.statusNote = t("video_viewer_status_error");
+        updateVideoViewerStatus();
+      },
+      { once: true }
+    );
+  };
+
+  player.onloadedmetadata = () => {
+    videoViewerState.naturalWidth = player.videoWidth || videoViewerState.naturalWidth;
+    videoViewerState.naturalHeight = player.videoHeight || videoViewerState.naturalHeight;
+    if (!videoViewerState.hasInitialLayout) {
+      fitVideoViewerToScreen();
+      videoViewerState.hasInitialLayout = true;
+    } else {
+      renderVideoViewerTransform();
+    }
+    videoViewerState.statusNote = videoViewerState.fallbackUsed
+      ? `${t("video_viewer_status_fallback")} ${t("file_preview_video_seek_hint")}`.trim()
+      : t("video_viewer_status_ready");
+    updateVideoViewerStatus();
+  };
+  player.onseeking = () => {
+    if (!videoViewerState.fallbackUsed || videoViewerState.fallbackReloading) {
+      return;
+    }
+    if (videoViewerState.fallbackSkipNextSeeking) {
+      videoViewerState.fallbackSkipNextSeeking = false;
+      return;
+    }
+    const target = Number(player.currentTime);
+    if (!Number.isFinite(target) || target < 0.2) {
+      return;
+    }
+    restartFallbackFrom(target, !player.paused);
+  };
+  player.onerror = () => {
+    if (videoViewerState.fallbackReloading) {
+      return;
+    }
+    if (!videoViewerState.fallbackUsed) {
+      videoViewerState.fallbackUsed = true;
+      videoViewerState.statusNote = t("video_viewer_status_loading");
+      updateVideoViewerStatus();
+      player.src = fallbackUrl;
+      player.load();
+      void player.play().catch(() => {});
+      return;
+    }
+    videoViewerState.statusNote = t("video_viewer_status_error");
+    updateVideoViewerStatus();
+  };
+  player.src = sourceUrl;
+  player.load();
+  void player.play().catch(() => {});
+}
+
+function clientToViewerCanvas(clientX, clientY) {
+  const canvas = $("image-viewer-canvas");
+  if (!canvas) {
+    return null;
+  }
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function clientToVideoViewerCanvas(clientX, clientY) {
+  const canvas = $("video-viewer-canvas");
+  if (!canvas) {
+    return null;
+  }
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function initImageViewer() {
+  const overlay = $("image-viewer-overlay");
+  const canvas = $("image-viewer-canvas");
+  const selection = $("image-viewer-selection");
+  const zoomInBtn = $("viewer-zoom-in-btn");
+  const zoomOutBtn = $("viewer-zoom-out-btn");
+  const zoom100Btn = $("viewer-zoom-100-btn");
+  const fitBtn = $("viewer-fit-btn");
+  const fragmentBtn = $("viewer-fragment-btn");
+  const closeBtn = $("viewer-close-btn");
+  if (!overlay || !canvas || !selection || !zoomInBtn || !zoomOutBtn || !zoom100Btn || !fitBtn || !fragmentBtn || !closeBtn) {
+    return;
+  }
+
+  const updateSelectionBox = (x1, y1, x2, y2) => {
+    const left = Math.min(x1, x2);
+    const top = Math.min(y1, y2);
+    const width = Math.abs(x2 - x1);
+    const height = Math.abs(y2 - y1);
+    selection.style.left = `${left}px`;
+    selection.style.top = `${top}px`;
+    selection.style.width = `${width}px`;
+    selection.style.height = `${height}px`;
+  };
+
+  zoomInBtn.onclick = () => applyImageViewerScale(imageViewerState.scale * 1.25);
+  zoomOutBtn.onclick = () => applyImageViewerScale(imageViewerState.scale / 1.25);
+  zoom100Btn.onclick = () => setImageViewerScale100();
+  fitBtn.onclick = () => fitImageViewerToScreen();
+  fragmentBtn.onclick = () => {
+    setImageViewerFragmentMode(!imageViewerState.fragmentMode);
+  };
+  closeBtn.onclick = () => closeImageViewer();
+  overlay.onclick = (event) => {
+    if (event.target === overlay) {
+      closeImageViewer();
+    }
+  };
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!imageViewerState.open || event.button !== 0) {
+      return;
+    }
+    const point = clientToViewerCanvas(event.clientX, event.clientY);
+    if (!point) {
+      return;
+    }
+    if (imageViewerState.fragmentMode) {
+      imageViewerState.selecting = true;
+      imageViewerState.selectStartX = point.x;
+      imageViewerState.selectStartY = point.y;
+      selection.classList.remove("hidden");
+      updateSelectionBox(point.x, point.y, point.x, point.y);
+    } else {
+      imageViewerState.dragging = true;
+      imageViewerState.dragStartX = point.x;
+      imageViewerState.dragStartY = point.y;
+      imageViewerState.dragOriginOffsetX = imageViewerState.offsetX;
+      imageViewerState.dragOriginOffsetY = imageViewerState.offsetY;
+      updateImageViewerStatus();
+    }
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (imageViewerState.dragging) {
+      const point = clientToViewerCanvas(event.clientX, event.clientY);
+      if (!point) {
+        return;
+      }
+      imageViewerState.offsetX =
+        imageViewerState.dragOriginOffsetX + (point.x - imageViewerState.dragStartX);
+      imageViewerState.offsetY =
+        imageViewerState.dragOriginOffsetY + (point.y - imageViewerState.dragStartY);
+      renderImageViewerTransform();
+      return;
+    }
+    if (!imageViewerState.selecting) {
+      return;
+    }
+    const point = clientToViewerCanvas(event.clientX, event.clientY);
+    if (!point) {
+      return;
+    }
+    updateSelectionBox(
+      imageViewerState.selectStartX,
+      imageViewerState.selectStartY,
+      point.x,
+      point.y
+    );
+  });
+
+  const finishPointerAction = (event) => {
+    const pointerId = event.pointerId;
+    if (canvas.hasPointerCapture(pointerId)) {
+      canvas.releasePointerCapture(pointerId);
+    }
+
+    if (imageViewerState.dragging) {
+      imageViewerState.dragging = false;
+      updateImageViewerStatus();
+      return;
+    }
+
+    if (!imageViewerState.selecting) {
+      return;
+    }
+    const point = clientToViewerCanvas(event.clientX, event.clientY);
+    const startX = imageViewerState.selectStartX;
+    const startY = imageViewerState.selectStartY;
+    hideImageViewerSelection();
+    if (!point) {
+      return;
+    }
+    const left = Math.min(startX, point.x);
+    const top = Math.min(startY, point.y);
+    const width = Math.abs(point.x - startX);
+    const height = Math.abs(point.y - startY);
+    if (width < 10 || height < 10) {
+      return;
+    }
+    zoomImageViewerToSelection(left, top, width, height);
+  };
+
+  canvas.addEventListener("pointerup", finishPointerAction);
+  canvas.addEventListener("pointercancel", finishPointerAction);
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      if (!imageViewerState.open) {
+        return;
+      }
+      event.preventDefault();
+      const point = clientToViewerCanvas(event.clientX, event.clientY);
+      if (!point) {
+        return;
+      }
+      const factor = Math.exp((-event.deltaY * 0.0015));
+      applyImageViewerScale(imageViewerState.scale * factor, point.x, point.y);
+    },
+    { passive: false }
+  );
+}
+
+function initVideoViewer() {
+  const overlay = $("video-viewer-overlay");
+  const canvas = $("video-viewer-canvas");
+  const selection = $("video-viewer-selection");
+  const zoomInBtn = $("video-viewer-zoom-in-btn");
+  const zoomOutBtn = $("video-viewer-zoom-out-btn");
+  const zoom100Btn = $("video-viewer-zoom-100-btn");
+  const fitBtn = $("video-viewer-fit-btn");
+  const fragmentBtn = $("video-viewer-fragment-btn");
+  const closeBtn = $("video-viewer-close-btn");
+  if (!overlay || !canvas || !selection || !zoomInBtn || !zoomOutBtn || !zoom100Btn || !fitBtn || !fragmentBtn || !closeBtn) {
+    return;
+  }
+
+  const updateSelectionBox = (x1, y1, x2, y2) => {
+    const left = Math.min(x1, x2);
+    const top = Math.min(y1, y2);
+    const width = Math.abs(x2 - x1);
+    const height = Math.abs(y2 - y1);
+    selection.style.left = `${left}px`;
+    selection.style.top = `${top}px`;
+    selection.style.width = `${width}px`;
+    selection.style.height = `${height}px`;
+  };
+
+  zoomInBtn.onclick = () => applyVideoViewerScale(videoViewerState.scale * 1.25);
+  zoomOutBtn.onclick = () => applyVideoViewerScale(videoViewerState.scale / 1.25);
+  zoom100Btn.onclick = () => setVideoViewerScale100();
+  fitBtn.onclick = () => fitVideoViewerToScreen();
+  fragmentBtn.onclick = () => {
+    setVideoViewerFragmentMode(!videoViewerState.fragmentMode);
+  };
+  closeBtn.onclick = () => closeVideoViewer();
+  overlay.onclick = (event) => {
+    if (event.target === overlay) {
+      closeVideoViewer();
+    }
+  };
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!videoViewerState.open) {
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+    const point = clientToVideoViewerCanvas(event.clientX, event.clientY);
+    if (!point) {
+      return;
+    }
+    if (videoViewerState.fragmentMode) {
+      videoViewerState.selecting = true;
+      videoViewerState.selectStartX = point.x;
+      videoViewerState.selectStartY = point.y;
+      selection.classList.remove("hidden");
+      updateSelectionBox(point.x, point.y, point.x, point.y);
+    } else {
+      if (isPointInVideoViewerControlZone(point)) {
+        return;
+      }
+      videoViewerState.pendingPan = true;
+      videoViewerState.dragStartX = point.x;
+      videoViewerState.dragStartY = point.y;
+      videoViewerState.dragOriginOffsetX = videoViewerState.offsetX;
+      videoViewerState.dragOriginOffsetY = videoViewerState.offsetY;
+    }
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (videoViewerState.pendingPan) {
+      const point = clientToVideoViewerCanvas(event.clientX, event.clientY);
+      if (!point) {
+        return;
+      }
+      const dx = point.x - videoViewerState.dragStartX;
+      const dy = point.y - videoViewerState.dragStartY;
+      if (Math.hypot(dx, dy) < VIDEO_VIEWER_PAN_START_DISTANCE) {
+        return;
+      }
+      videoViewerState.pendingPan = false;
+      videoViewerState.dragging = true;
+      updateVideoViewerStatus();
+    }
+    if (videoViewerState.dragging) {
+      const point = clientToVideoViewerCanvas(event.clientX, event.clientY);
+      if (!point) {
+        return;
+      }
+      videoViewerState.offsetX =
+        videoViewerState.dragOriginOffsetX + (point.x - videoViewerState.dragStartX);
+      videoViewerState.offsetY =
+        videoViewerState.dragOriginOffsetY + (point.y - videoViewerState.dragStartY);
+      renderVideoViewerTransform();
+      return;
+    }
+    if (!videoViewerState.selecting) {
+      return;
+    }
+    const point = clientToVideoViewerCanvas(event.clientX, event.clientY);
+    if (!point) {
+      return;
+    }
+    updateSelectionBox(
+      videoViewerState.selectStartX,
+      videoViewerState.selectStartY,
+      point.x,
+      point.y
+    );
+  });
+
+  const finishPointerAction = (event) => {
+    const pointerId = event.pointerId;
+    if (canvas.hasPointerCapture(pointerId)) {
+      canvas.releasePointerCapture(pointerId);
+    }
+
+    if (videoViewerState.pendingPan) {
+      videoViewerState.pendingPan = false;
+      return;
+    }
+
+    if (videoViewerState.dragging) {
+      videoViewerState.dragging = false;
+      updateVideoViewerStatus();
+      return;
+    }
+
+    if (!videoViewerState.selecting) {
+      return;
+    }
+    const point = clientToVideoViewerCanvas(event.clientX, event.clientY);
+    const startX = videoViewerState.selectStartX;
+    const startY = videoViewerState.selectStartY;
+    hideVideoViewerSelection();
+    if (!point) {
+      return;
+    }
+    const left = Math.min(startX, point.x);
+    const top = Math.min(startY, point.y);
+    const width = Math.abs(point.x - startX);
+    const height = Math.abs(point.y - startY);
+    if (width < 10 || height < 10) {
+      return;
+    }
+    zoomVideoViewerToSelection(left, top, width, height);
+  };
+
+  canvas.addEventListener("pointerup", finishPointerAction);
+  canvas.addEventListener("pointercancel", finishPointerAction);
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      if (!videoViewerState.open) {
+        return;
+      }
+      event.preventDefault();
+      const point = clientToVideoViewerCanvas(event.clientX, event.clientY);
+      if (!point) {
+        return;
+      }
+      const factor = Math.exp(-event.deltaY * 0.0015);
+      applyVideoViewerScale(videoViewerState.scale * factor, point.x, point.y);
+    },
+    { passive: false }
+  );
 }
 
 function createFilePreviewNode(details) {
@@ -874,7 +1920,7 @@ function createFilePreviewNode(details) {
       if (!Number.isFinite(target) || target < 0.2) {
         return;
       }
-      restartFrom(target, !video.paused);
+      restartFrom(target, previewAutostart || !video.paused);
     });
 
     video.addEventListener("error", () => {
@@ -894,6 +1940,11 @@ function createFilePreviewNode(details) {
         }
       })
       .then(() => {
+        if (previewAutostart) {
+          video.addEventListener("loadedmetadata", () => {
+            void video.play().catch(() => {});
+          }, { once: true });
+        }
         video.src = buildVideoUrl(0);
       })
       .catch((err) => {
@@ -988,23 +2039,23 @@ async function getFileDetails(rootId, path, force = false) {
 async function loadAndRenderFileDetails(rootId, path) {
   setFileDetailsPlaceholder(t("loading_file_details"));
   const details = await getFileDetails(rootId, path);
-  if (selectedFilePath !== path) {
+  if (selectedRowType !== "file" || selectedRowPath !== path) {
     return;
   }
   renderFileDetails(details);
 }
 
-function scrollSelectedFileIntoView() {
-  if (!selectedFilePath) {
+function scrollSelectedRowIntoView() {
+  if (!selectedRowPath || !selectedRowType) {
     return;
   }
   const body = $("files-table-body");
   if (!body) {
     return;
   }
-  const rows = body.querySelectorAll("tr[data-file-path]");
+  const rows = body.querySelectorAll("tr[data-file-path][data-file-type]");
   rows.forEach((row) => {
-    if (row.dataset.filePath === selectedFilePath) {
+    if (row.dataset.filePath === selectedRowPath && row.dataset.fileType === selectedRowType) {
       row.scrollIntoView({ block: "nearest" });
     }
   });
@@ -1021,16 +2072,18 @@ function selectFileByIndex(index, { ensureVisible = true } = {}) {
   }
   const clamped = Math.min(Math.max(index, 0), rows.length - 1);
   const item = rows[clamped];
-  selectedFilePath = item.path;
-  setFilesSelectionInfo(t("file_selected", { path: item.path }));
+  setSelectionFromRow(item);
+  setFilesSelectionInfo(selectionInfoForRow(item));
   renderFilesTable();
-  if (selectedDirContext) {
+  if (selectedDirContext && isFileRow(item)) {
     loadAndRenderFileDetails(selectedDirContext.rootId, item.path).catch(() => {
       setFileDetailsPlaceholder(t("file_details_error"));
     });
+  } else {
+    setFileDetailsPlaceholder(t("file_details_placeholder"));
   }
   if (ensureVisible) {
-    scrollSelectedFileIntoView();
+    scrollSelectedRowIntoView();
   }
 }
 
@@ -1039,7 +2092,9 @@ function moveFileSelection(step) {
   if (!rows.length) {
     return;
   }
-  const currentIndex = rows.findIndex((item) => item.path === selectedFilePath);
+  const currentIndex = rows.findIndex(
+    (item) => item.path === selectedRowPath && item.type === selectedRowType
+  );
   const start = currentIndex >= 0 ? currentIndex : step > 0 ? -1 : rows.length;
   selectFileByIndex(start + step);
 }
@@ -1068,15 +2123,26 @@ function tryCopyToClipboard(text) {
   return Promise.resolve(ok);
 }
 
-async function activateSelectedFile() {
-  if (!selectedFilePath) {
-    return;
+async function copySelectedRowPath() {
+  const item = getSelectedRow();
+  if (!item || !item.path || isUpRow(item)) {
+    return false;
   }
-  const item = currentFiles.find((file) => file.path === selectedFilePath);
+  return tryCopyToClipboard(item.path);
+}
+
+async function activateSelectedEntry() {
+  const item = getSelectedRow();
   if (!item) {
     return;
   }
-  await activateFile(item);
+  if (isFileRow(item)) {
+    await activateFile(item);
+    return;
+  }
+  if ((isDirRow(item) || isUpRow(item)) && selectedDirContext) {
+    await selectDirectory(selectedDirContext.rootId, item.path);
+  }
 }
 
 async function navigateToParentDirectory() {
@@ -1098,10 +2164,10 @@ async function navigateToParentDirectory() {
 }
 
 async function activateFile(item) {
-  if (!item) {
+  if (!item || !isFileRow(item)) {
     return;
   }
-  selectedFilePath = item.path;
+  setSelectionFromRow(item);
   renderFilesTable();
   const copied = await tryCopyToClipboard(item.path);
   if (copied) {
@@ -1111,12 +2177,41 @@ async function activateFile(item) {
   }
 }
 
+async function openFileByDoubleClick(item) {
+  if (!item || !isFileRow(item)) {
+    return;
+  }
+  if (!selectedDirContext) {
+    await activateFile(item);
+    return;
+  }
+  try {
+    const details = await getFileDetails(selectedDirContext.rootId, item.path);
+    if (details && (isImageMime(details.mime) || isImageName(item.name))) {
+      openImageViewer(selectedDirContext.rootId, item.path, item.name);
+      return;
+    }
+    if (details && (isVideoMime(details.mime) || isVideoName(item.name))) {
+      openVideoViewer(selectedDirContext.rootId, item.path, item.name);
+      return;
+    }
+  } catch {
+    // fallback to default file activation
+  }
+  await activateFile(item);
+}
+
 function renderFilesTable() {
   const body = $("files-table-body");
   body.innerHTML = "";
 
-  if (selectedFilePath && !currentFiles.some((item) => item.path === selectedFilePath)) {
-    selectedFilePath = null;
+  if (
+    selectedRowPath &&
+    selectedRowType &&
+    !currentFiles.some((item) => item.path === selectedRowPath && item.type === selectedRowType)
+  ) {
+    selectedRowPath = null;
+    selectedRowType = null;
   }
 
   const rows = sortedFiles(currentFiles);
@@ -1134,35 +2229,62 @@ function renderFilesTable() {
   rows.forEach((item) => {
     const tr = document.createElement("tr");
     tr.dataset.filePath = item.path;
-    if (item.path === selectedFilePath) {
+    tr.dataset.fileType = item.type;
+    if (item.path === selectedRowPath && item.type === selectedRowType) {
       tr.classList.add("selected");
     }
     tr.onclick = () => {
-      selectedFilePath = item.path;
-      setFilesSelectionInfo(t("file_selected", { path: item.path }));
+      setSelectionFromRow(item);
+      setFilesSelectionInfo(selectionInfoForRow(item));
       renderFilesTable();
-      if (selectedDirContext) {
+      if (selectedDirContext && isFileRow(item)) {
         loadAndRenderFileDetails(selectedDirContext.rootId, item.path).catch(() => {
           setFileDetailsPlaceholder(t("file_details_error"));
         });
+      } else {
+        setFileDetailsPlaceholder(t("file_details_placeholder"));
       }
     };
     tr.ondblclick = () => {
-      activateFile(item).catch(() => {
-        setFilesSelectionInfo(t("file_activated", { path: item.path }));
+      if (selectedDirContext && (isDirRow(item) || isUpRow(item))) {
+        selectDirectory(selectedDirContext.rootId, item.path).catch((err) => {
+          alert(t("err_open_directory", { message: err.message }));
+        });
+        return;
+      }
+      openFileByDoubleClick(item).catch((err) => {
+        if (isFileRow(item)) {
+          alert(t("viewer_open_failed", { message: err.message }));
+          return;
+        }
+        setFilesSelectionInfo(selectionInfoForRow(item));
       });
     };
 
     const name = document.createElement("td");
-    name.textContent = item.name;
+    if (isDirRow(item)) {
+      name.textContent = `${item.name}/`;
+    } else {
+      name.textContent = item.name;
+    }
     tr.appendChild(name);
 
     const size = document.createElement("td");
-    size.textContent = formatSize(item.size);
+    if (isUpRow(item)) {
+      size.textContent = "";
+    } else if (Number.isFinite(Number(item.size))) {
+      size.textContent = formatSize(item.size);
+    } else {
+      size.textContent = "";
+    }
     tr.appendChild(size);
 
     const mtime = document.createElement("td");
-    mtime.textContent = formatDateTime(item.mtime);
+    if (isUpRow(item)) {
+      mtime.textContent = "";
+    } else {
+      mtime.textContent = formatDateTime(item.mtime);
+    }
     tr.appendChild(mtime);
 
     body.appendChild(tr);
@@ -1182,14 +2304,31 @@ function setFileSort(key) {
 
 async function selectDirectory(rootId, dirPath) {
   const data = await getDirData(rootId, dirPath);
+  const rootPath = normalizePath(data.rootPath || dirPath);
+  const currentPath = normalizePath(data.dirPath || dirPath);
+  const rows = [];
+  if (currentPath !== rootPath) {
+    const parentPath = normalizePath(getParentPath(currentPath));
+    rows.push({
+      name: t("parent_dir_name"),
+      path: parentPath,
+      type: "up",
+      size: null,
+      mtime: null,
+    });
+  }
+  rows.push(...(data.dirs || []));
+  rows.push(...(data.files || []));
+
   selectedDirContext = {
     rootId: Number(rootId),
-    rootPath: normalizePath(data.rootPath || dirPath),
-    dirPath: normalizePath(data.dirPath || dirPath),
+    rootPath,
+    dirPath: currentPath,
   };
   selectedDirKey = treeKey(rootId, selectedDirContext.dirPath);
-  selectedFilePath = null;
-  currentFiles = data.files || [];
+  selectedRowPath = null;
+  selectedRowType = null;
+  currentFiles = rows;
   updateFilesTitle();
   setFilesSelectionInfo(t("files_selection_default"));
   setFileDetailsPlaceholder(t("file_details_placeholder"));
@@ -1301,7 +2440,8 @@ async function refreshTree() {
   fileDetailsCache.clear();
   selectedDirKey = null;
   selectedDirContext = null;
-  selectedFilePath = null;
+  selectedRowPath = null;
+  selectedRowType = null;
   currentFiles = [];
   updateFilesTitle();
   setFilesSelectionInfo(t("files_selection_default"));
@@ -1532,6 +2672,16 @@ function bindActions() {
   $("sort-name-btn").onclick = () => setFileSort("name");
   $("sort-size-btn").onclick = () => setFileSort("size");
   $("sort-mtime-btn").onclick = () => setFileSort("mtime");
+  const previewAutostartInput = $("preview-autostart-input");
+  if (previewAutostartInput) {
+    previewAutostartInput.onchange = (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) {
+        return;
+      }
+      applyPreviewAutostartSetting(target.checked, { persist: true, rerender: true });
+    };
+  }
   $("language-select").onchange = async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLSelectElement)) {
@@ -1540,21 +2690,26 @@ function bindActions() {
     setLanguage(target.value);
     updateSortButtons();
     renderFilesTable();
-    if (selectedDirContext && selectedFilePath) {
-      const key = `${String(selectedDirContext.rootId)}:${selectedFilePath}`;
+    if (selectedDirContext && selectedRowPath && selectedRowType === "file") {
+      const key = `${String(selectedDirContext.rootId)}:${selectedRowPath}`;
       const cached = fileDetailsCache.get(key);
       if (cached) {
         renderFileDetails(cached);
       } else {
-        await loadAndRenderFileDetails(selectedDirContext.rootId, selectedFilePath).catch(() => {
+        await loadAndRenderFileDetails(selectedDirContext.rootId, selectedRowPath).catch(() => {
           setFileDetailsPlaceholder(t("file_details_error"));
         });
       }
-      setFilesSelectionInfo(t("file_selected", { path: selectedFilePath }));
+      setFilesSelectionInfo(t("file_selected", { path: selectedRowPath }));
     } else {
       setFileDetailsPlaceholder(t("file_details_placeholder"));
-      if (!selectedFilePath) {
+      if (!selectedRowPath || !selectedRowType) {
         setFilesSelectionInfo(t("files_selection_default"));
+      } else {
+        const selected = getSelectedRow();
+        if (selected) {
+          setFilesSelectionInfo(selectionInfoForRow(selected));
+        }
       }
     }
     await refreshRoots().catch(() => {});
@@ -1665,6 +2820,18 @@ function bindActions() {
   };
 
   document.addEventListener("keydown", (event) => {
+    if (imageViewerState.open || videoViewerState.open) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (imageViewerState.open) {
+          closeImageViewer();
+        }
+        if (videoViewerState.open) {
+          closeVideoViewer();
+        }
+      }
+      return;
+    }
     const treeTab = $("tab-tree");
     if (!treeTab || !treeTab.classList.contains("active")) {
       return;
@@ -1685,11 +2852,16 @@ function bindActions() {
 
     if (isCopyHotkey) {
       event.preventDefault();
-      if (!selectedFilePath) {
+      const selected = getSelectedRow();
+      if (!selected || isUpRow(selected)) {
         setFilesSelectionInfo(t("select_file_first"));
         return;
       }
-      activateSelectedFile().catch(() => {
+      copySelectedRowPath().then((ok) => {
+        if (ok) {
+          setFilesSelectionInfo(t("file_path_copied", { path: selected.path }));
+          return;
+        }
         setFilesSelectionInfo(t("copy_path_failed"));
       });
       return;
@@ -1725,7 +2897,7 @@ function bindActions() {
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      activateSelectedFile().catch(() => {
+      activateSelectedEntry().catch(() => {
         setFilesSelectionInfo(t("file_action_failed"));
       });
     }
@@ -1734,7 +2906,10 @@ function bindActions() {
 
 async function bootstrap() {
   initLanguage();
+  applyPreviewAutostartSetting(readPreviewAutostartSetting(), { persist: false, rerender: false });
   initBrowserPaneResize();
+  initImageViewer();
+  initVideoViewer();
   bindActions();
   updateSortButtons();
   await refreshRoots().catch((err) => {

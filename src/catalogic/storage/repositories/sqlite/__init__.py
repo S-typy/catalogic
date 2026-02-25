@@ -358,12 +358,21 @@ class SQLiteFileRepository(FileRepository):
                 continue
 
             child_path = os.path.join(normalized_dir, name)
-            dirs[name] = {
-                "name": name,
-                "path": child_path,
-                "type": "dir",
-                "has_children": True,
-            }
+            entry = dirs.get(name)
+            row_size = int(row["size"])
+            row_mtime = float(row["mtime"])
+            if entry is None:
+                dirs[name] = {
+                    "name": name,
+                    "path": child_path,
+                    "type": "dir",
+                    "has_children": True,
+                    "size": row_size,
+                    "mtime": row_mtime,
+                }
+            else:
+                entry["size"] = int(entry.get("size", 0)) + row_size
+                entry["mtime"] = max(float(entry.get("mtime", 0.0)), row_mtime)
 
         children = list(dirs.values()) + list(files.values())
         children.sort(key=lambda item: (item.get("type") != "dir", str(item.get("name")).lower()))

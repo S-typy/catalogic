@@ -82,6 +82,12 @@
             </div>
           </div>
           <div class="settings-grid-row">
+            <label for="preview-autostart-input" data-i18n="preview_autostart_label">Автостарт превью видео:</label>
+            <div class="settings-grid-control checkbox-control">
+              <input id="preview-autostart-input" type="checkbox">
+            </div>
+          </div>
+          <div class="settings-grid-row">
             <label data-i18n="scanner_controls_label">Управление сканером:</label>
             <div class="settings-grid-control settings-grid-control-inline">
               <button id="start-scan-btn" disabled data-i18n="start_scan_btn">Старт сканера</button>
@@ -209,6 +215,38 @@
       <pre id="dups-result" class="box"></pre>
     </section>
   </main>
+
+  <div id="video-viewer-overlay" class="video-viewer-overlay hidden">
+    <div class="video-viewer-toolbar">
+      <button id="video-viewer-zoom-in-btn" type="button" title="Увеличить">+</button>
+      <button id="video-viewer-zoom-out-btn" type="button" title="Уменьшить">-</button>
+      <button id="video-viewer-zoom-100-btn" type="button" data-i18n="viewer_btn_100">100%</button>
+      <button id="video-viewer-fit-btn" type="button" data-i18n="viewer_btn_fit">По экрану</button>
+      <button id="video-viewer-fragment-btn" type="button" data-i18n="viewer_btn_fragment">Фрагмент</button>
+      <button id="video-viewer-close-btn" type="button" data-i18n="video_viewer_btn_close">Закрыть</button>
+      <span id="video-viewer-status" class="video-viewer-status"></span>
+    </div>
+    <div id="video-viewer-canvas" class="video-viewer-canvas">
+      <video id="video-viewer-player" class="video-viewer-player" controls preload="metadata"></video>
+      <div id="video-viewer-selection" class="video-viewer-selection hidden"></div>
+    </div>
+  </div>
+
+  <div id="image-viewer-overlay" class="image-viewer-overlay hidden">
+    <div class="image-viewer-toolbar">
+      <button id="viewer-zoom-in-btn" type="button" title="Увеличить">+</button>
+      <button id="viewer-zoom-out-btn" type="button" title="Уменьшить">-</button>
+      <button id="viewer-zoom-100-btn" type="button" data-i18n="viewer_btn_100">100%</button>
+      <button id="viewer-fit-btn" type="button" data-i18n="viewer_btn_fit">По экрану</button>
+      <button id="viewer-fragment-btn" type="button" data-i18n="viewer_btn_fragment">Фрагмент</button>
+      <button id="viewer-close-btn" type="button" data-i18n="viewer_btn_close">Закрыть</button>
+      <span id="viewer-status" class="image-viewer-status"></span>
+    </div>
+    <div id="image-viewer-canvas" class="image-viewer-canvas">
+      <img id="image-viewer-img" class="image-viewer-img" alt="">
+      <div id="image-viewer-selection" class="image-viewer-selection hidden"></div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

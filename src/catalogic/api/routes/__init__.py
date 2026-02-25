@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from dataclasses import asdict
+import mimetypes
 import os
 from pathlib import Path
 import shutil
@@ -11,7 +12,7 @@ import subprocess
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
 
@@ -108,6 +109,32 @@ def create_api_router() -> APIRouter:
             ".mpeg",
             ".mpg",
         }
+
+    def _is_likely_image(path: Path, mime: str) -> bool:
+        if mime.lower().startswith("image/"):
+            return True
+        return path.suffix.lower() in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".gif",
+            ".bmp",
+            ".tif",
+            ".tiff",
+            ".avif",
+            ".heic",
+            ".heif",
+        }
+
+    def _resolve_media_type(path: Path, mime: str, expected_prefix: str) -> str:
+        lowered = str(mime or "").lower()
+        if lowered.startswith(expected_prefix):
+            return lowered
+        guessed, _ = mimetypes.guess_type(path.name)
+        if guessed and guessed.lower().startswith(expected_prefix):
+            return guessed.lower()
+        return "application/octet-stream"
 
     @router.get("/health")
     def health() -> dict[str, str]:
@@ -285,6 +312,40 @@ def create_api_router() -> APIRouter:
         return Response(
             content=buf.getvalue(),
             media_type="image/webp",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/file/view/image")
+    def get_file_image_view(
+        request: Request,
+        root_id: int = Query(ge=1),
+        path: str = Query(min_length=1),
+    ) -> FileResponse:
+        file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
+        if not _is_likely_image(file_path, mime):
+            raise HTTPException(status_code=415, detail="Image viewer is supported only for image files")
+        media_type = _resolve_media_type(file_path, mime, "image/")
+        return FileResponse(
+            path=str(file_path),
+            media_type=media_type,
+            filename=file_path.name,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/file/view/video")
+    def get_file_video_view(
+        request: Request,
+        root_id: int = Query(ge=1),
+        path: str = Query(min_length=1),
+    ) -> FileResponse:
+        file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
+        if not _is_likely_video(file_path, mime):
+            raise HTTPException(status_code=415, detail="Video viewer is supported only for video files")
+        media_type = _resolve_media_type(file_path, mime, "video/")
+        return FileResponse(
+            path=str(file_path),
+            media_type=media_type,
+            filename=file_path.name,
             headers={"Cache-Control": "no-store"},
         )
 
