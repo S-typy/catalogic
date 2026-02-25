@@ -94,11 +94,12 @@ main {
   gap: 8px;
   margin-bottom: 10px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 input {
   min-width: 280px;
-  padding: 8px;
+  padding: 0 10px;
 }
 
 input[type="number"] {
@@ -114,11 +115,128 @@ input[type="checkbox"] {
 }
 
 select {
-  padding: 8px;
+  padding: 0 10px;
 }
 
 button {
-  padding: 8px 12px;
+  padding: 0 12px;
+}
+
+.row > input:not([type="checkbox"]),
+.row > select,
+.row > button {
+  min-height: 36px;
+  height: 36px;
+}
+
+.row > label {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.settings-panel .box {
+  margin-bottom: 10px;
+}
+
+.settings-form-box {
+  padding: 12px;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-grid-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.settings-grid-row > label {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  font-weight: 600;
+  color: #334e68;
+}
+
+.settings-grid-control {
+  min-width: 0;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-grid-control > input:not([type="checkbox"]),
+.settings-grid-control > select,
+.settings-grid-control > button {
+  min-height: 36px;
+  height: 36px;
+}
+
+.settings-grid-control > input[type="text"] {
+  flex: 1 1 340px;
+  min-width: 260px;
+}
+
+.settings-grid-control > select {
+  min-width: 220px;
+  max-width: 420px;
+}
+
+.settings-grid-control.checkbox-control input[type="checkbox"] {
+  margin: 0;
+}
+
+.settings-roots-box {
+  padding-top: 10px;
+}
+
+.settings-roots-box h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+#roots-list.list {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.perf-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.perf-table th,
+.perf-table td {
+  border-bottom: 1px solid #e5e8ee;
+  padding: 8px 6px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.perf-table th {
+  width: 280px;
+  font-weight: 600;
+  color: #334e68;
+}
+
+.perf-table td > input,
+.perf-table td > select {
+  width: 100%;
+  min-width: 140px;
+  min-height: 36px;
+  height: 36px;
+}
+
+.perf-actions {
+  margin-top: 10px;
 }
 
 .list {
@@ -301,6 +419,33 @@ button {
   height: 100%;
 }
 
+.file-preview-container {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5e8ee;
+}
+
+.file-preview-image,
+.file-preview-video {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  border-radius: 8px;
+  border: 1px solid #d9e2ec;
+  background: #0f172a;
+  object-fit: contain;
+}
+
+.file-preview-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #52606d;
+}
+
+.file-preview-error {
+  color: #b42318;
+}
+
 .file-details-grid {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
@@ -354,6 +499,41 @@ button {
 }
 
 @media (max-width: 900px) {
+  .settings-grid-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .settings-grid-control > input[type="text"] {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .settings-grid-control > select {
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+  }
+
+  .perf-table th,
+  .perf-table td {
+    display: block;
+    width: 100%;
+    border-bottom: none;
+    padding: 4px 0;
+  }
+
+  .perf-table tr {
+    display: block;
+    border-bottom: 1px solid #e5e8ee;
+    padding: 6px 0;
+  }
+
+  .perf-table td > input,
+  .perf-table td > select {
+    width: 100%;
+  }
+
   .browser-layout {
     grid-template-columns: 1fr;
     gap: 12px;

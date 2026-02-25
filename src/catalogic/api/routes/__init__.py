@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from dataclasses import asdict
 from pathlib import Path
+import shutil
+import subprocess
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+from PIL import Image, ImageOps
 
 from catalogic.app import (
     add_root,
@@ -55,6 +60,33 @@ def create_api_router() -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail="Path is outside browse root") from e
         return root, candidate
+
+    def _resolve_scanned_file(request: Request, *, root_id: int, path: str) -> tuple[Path, str]:
+        from catalogic.storage import open_sqlite_storage
+
+        storage = open_sqlite_storage(request.app.state.db_path, migrate=True)
+        try:
+            root = storage.scan_roots.get_by_id(int(root_id))
+            record = storage.files.get_by_root_and_path(root_id=int(root_id), path=path)
+        finally:
+            storage.close()
+
+        if root is None:
+            raise HTTPException(status_code=404, detail="Root not found")
+        if record is None:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        root_path = Path(root.path).expanduser().resolve()
+        file_path = Path(record.path).expanduser().resolve()
+        try:
+            file_path.relative_to(root_path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="File path is outside root") from e
+
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail="File does not exist on disk")
+
+        return file_path, str(record.mime or "")
 
     @router.get("/health")
     def health() -> dict[str, str]:
@@ -198,6 +230,144 @@ def create_api_router() -> APIRouter:
         if details is None:
             raise HTTPException(status_code=404, detail="File not found")
         return details
+
+    @router.get("/file/preview/image")
+    def get_file_image_preview(
+        request: Request,
+        root_id: int = Query(ge=1),
+        path: str = Query(min_length=1),
+        width: int = Query(default=420, ge=80, le=1920),
+        height: int = Query(default=280, ge=80, le=1080),
+        quality: int = Query(default=45, ge=20, le=90),
+    ) -> Response:
+        file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
+        if not mime.lower().startswith("image/"):
+            raise HTTPException(status_code=415, detail="Image preview is supported only for image files")
+
+        try:
+            with Image.open(file_path) as source:
+                image = ImageOps.exif_transpose(source).copy()
+        except OSError as e:
+            raise HTTPException(status_code=415, detail=f"Cannot decode image: {e}") from e
+
+        image.thumbnail((int(width), int(height)), Image.Resampling.LANCZOS)
+        if image.mode in ("RGBA", "LA"):
+            alpha = image.getchannel("A")
+            base = Image.new("RGB", image.size, (24, 24, 24))
+            base.paste(image, mask=alpha)
+            image = base
+        elif image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+
+        buf = BytesIO()
+        image.save(buf, format="WEBP", quality=int(quality), method=4)
+        return Response(
+            content=buf.getvalue(),
+            media_type="image/webp",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/file/preview/video")
+    def get_file_video_preview(
+        request: Request,
+        root_id: int = Query(ge=1),
+        path: str = Query(min_length=1),
+        start_sec: float = Query(default=0.0, ge=0.0),
+        width: int = Query(default=640, ge=160, le=1920),
+        video_bitrate_kbps: int = Query(default=700, ge=180, le=4000),
+        audio_bitrate_kbps: int = Query(default=96, ge=48, le=256),
+    ) -> StreamingResponse:
+        file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
+        if not mime.lower().startswith("video/"):
+            raise HTTPException(status_code=415, detail="Video preview is supported only for video files")
+
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise HTTPException(status_code=503, detail="ffmpeg is not available")
+
+        ffmpeg_cmd = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-ss",
+            f"{float(start_sec):.3f}",
+            "-i",
+            str(file_path),
+            "-map",
+            "0:v:0?",
+            "-map",
+            "0:a:0?",
+            "-vf",
+            f"scale='min({int(width)},iw)':'-2':flags=lanczos",
+            "-r",
+            "24",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "33",
+            "-maxrate",
+            f"{int(video_bitrate_kbps)}k",
+            "-bufsize",
+            f"{int(video_bitrate_kbps) * 2}k",
+            "-g",
+            "48",
+            "-c:a",
+            "aac",
+            "-b:a",
+            f"{int(audio_bitrate_kbps)}k",
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            "-movflags",
+            "frag_keyframe+empty_moov+default_base_moof",
+            "-f",
+            "mp4",
+            "pipe:1",
+        ]
+
+        try:
+            proc = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Cannot start ffmpeg: {e}") from e
+
+        if proc.stdout is None:
+            proc.kill()
+            raise HTTPException(status_code=500, detail="ffmpeg pipe is not available")
+
+        def _iter_video() -> Any:
+            try:
+                while True:
+                    chunk = proc.stdout.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                try:
+                    if proc.stdout:
+                        proc.stdout.close()
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                    try:
+                        proc.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+
+        return StreamingResponse(
+            _iter_video(),
+            media_type="video/mp4",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @router.get("/search")
     def get_search(

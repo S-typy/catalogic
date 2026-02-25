@@ -26,19 +26,32 @@
   </nav>
 
   <main>
-    <section id="tab-settings" class="panel active">
+    <section id="tab-settings" class="panel active settings-panel">
       <h2 data-i18n="settings_title">Настройки</h2>
-      <div class="row">
-        <label for="language-select" data-i18n="settings_language_label">Язык интерфейса:</label>
-        <select id="language-select">
-          <option value="ru" data-i18n="language_ru">Русский</option>
-          <option value="en" data-i18n="language_en">English</option>
-        </select>
+      <div class="box settings-form-box">
+        <div class="settings-grid">
+          <div class="settings-grid-row">
+            <label for="language-select" data-i18n="settings_language_label">Язык интерфейса:</label>
+            <div class="settings-grid-control">
+              <select id="language-select">
+                <option value="ru" data-i18n="language_ru">Русский</option>
+                <option value="en" data-i18n="language_en">English</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-grid-row">
+            <label for="root-input" data-i18n="root_add_path_label">Путь для добавления:</label>
+            <div class="settings-grid-control settings-grid-control-inline">
+              <input id="root-input" type="text" placeholder="/mnt/storage/media" data-i18n-placeholder="root_input_placeholder">
+              <button id="open-picker-btn" data-i18n="open_picker_btn">Выбрать каталог</button>
+              <button id="add-root-btn" data-i18n="add_root_btn">Добавить путь</button>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="row">
-        <input id="root-input" type="text" placeholder="/mnt/storage/media" data-i18n-placeholder="root_input_placeholder">
-        <button id="open-picker-btn" data-i18n="open_picker_btn">Выбрать каталог</button>
-        <button id="add-root-btn" data-i18n="add_root_btn">Добавить путь</button>
+      <div class="box settings-roots-box">
+        <h3 data-i18n="scan_paths_title">Пути сканирования</h3>
+        <ul id="roots-list" class="list"></ul>
       </div>
       <div id="dir-picker" class="box hidden">
         <div class="row">
@@ -51,48 +64,74 @@
         </div>
         <ul id="picker-list" class="list"></ul>
       </div>
-      <div class="row">
-        <label for="scan-mode-select" data-i18n="scan_mode_label">Режим сканирования:</label>
-        <select id="scan-mode-select">
-          <option value="add_new" data-i18n="scan_mode_add_new">Добавление новых</option>
-          <option value="rebuild" data-i18n="scan_mode_rebuild">Пересоздание базы</option>
-        </select>
-        <label for="follow-symlinks-input" data-i18n="follow_symlinks_label">Следовать symlink-директориям:</label>
-        <input id="follow-symlinks-input" type="checkbox">
-      </div>
-      <div class="row">
-        <button id="start-scan-btn" disabled data-i18n="start_scan_btn">Старт сканера</button>
-        <button id="stop-scan-btn" disabled data-i18n="stop_scan_btn">Стоп сканера</button>
+      <div class="box settings-form-box">
+        <div class="settings-grid">
+          <div class="settings-grid-row">
+            <label for="scan-mode-select" data-i18n="scan_mode_label">Режим сканирования:</label>
+            <div class="settings-grid-control">
+              <select id="scan-mode-select">
+                <option value="add_new" data-i18n="scan_mode_add_new">Добавление новых</option>
+                <option value="rebuild" data-i18n="scan_mode_rebuild">Пересоздание базы</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-grid-row">
+            <label for="follow-symlinks-input" data-i18n="follow_symlinks_label">Следовать symlink-директориям:</label>
+            <div class="settings-grid-control checkbox-control">
+              <input id="follow-symlinks-input" type="checkbox">
+            </div>
+          </div>
+          <div class="settings-grid-row">
+            <label data-i18n="scanner_controls_label">Управление сканером:</label>
+            <div class="settings-grid-control settings-grid-control-inline">
+              <button id="start-scan-btn" disabled data-i18n="start_scan_btn">Старт сканера</button>
+              <button id="stop-scan-btn" disabled data-i18n="stop_scan_btn">Стоп сканера</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="box">
         <h3 data-i18n="perf_settings_title">Производительность сканера</h3>
-        <div class="row">
-          <label for="hash-mode-select" data-i18n="hash_mode_label">Режим хэша:</label>
-          <select id="hash-mode-select">
-            <option value="auto" data-i18n="hash_mode_auto">Авто</option>
-            <option value="full" data-i18n="hash_mode_full">Полный MD5</option>
-            <option value="sample" data-i18n="hash_mode_sample">Сэмплированный</option>
-          </select>
-          <label for="hash-threshold-input" data-i18n="hash_threshold_label">Порог sample (MB):</label>
-          <input id="hash-threshold-input" type="number" min="0" step="1">
-          <label for="hash-chunk-input" data-i18n="hash_chunk_label">Размер sample блока (MB):</label>
-          <input id="hash-chunk-input" type="number" min="1" step="1">
-        </div>
-        <div class="row">
-          <label for="ffprobe-timeout-input" data-i18n="ffprobe_timeout_label">ffprobe timeout (sec):</label>
-          <input id="ffprobe-timeout-input" type="number" min="1" step="0.5">
-          <label for="ffprobe-analyze-input" data-i18n="ffprobe_analyze_label">ffprobe analyzeduration (us):</label>
-          <input id="ffprobe-analyze-input" type="number" min="0" step="1000">
-          <label for="ffprobe-probesize-input" data-i18n="ffprobe_probesize_label">ffprobe probesize (bytes):</label>
-          <input id="ffprobe-probesize-input" type="number" min="32768" step="1024">
-        </div>
-        <div class="row">
+        <table class="perf-table">
+          <tbody>
+            <tr>
+              <th><label for="hash-mode-select" data-i18n="hash_mode_label">Режим хэша:</label></th>
+              <td>
+                <select id="hash-mode-select">
+                  <option value="auto" data-i18n="hash_mode_auto">Авто</option>
+                  <option value="full" data-i18n="hash_mode_full">Полный MD5</option>
+                  <option value="sample" data-i18n="hash_mode_sample">Сэмплированный</option>
+                </select>
+              </td>
+            </tr>
+            <tr>
+              <th><label for="hash-threshold-input" data-i18n="hash_threshold_label">Порог sample (MB):</label></th>
+              <td><input id="hash-threshold-input" type="number" min="0" step="1"></td>
+            </tr>
+            <tr>
+              <th><label for="hash-chunk-input" data-i18n="hash_chunk_label">Размер sample блока (MB):</label></th>
+              <td><input id="hash-chunk-input" type="number" min="1" step="1"></td>
+            </tr>
+            <tr>
+              <th><label for="ffprobe-timeout-input" data-i18n="ffprobe_timeout_label">ffprobe timeout (sec):</label></th>
+              <td><input id="ffprobe-timeout-input" type="number" min="1" step="0.5"></td>
+            </tr>
+            <tr>
+              <th><label for="ffprobe-analyze-input" data-i18n="ffprobe_analyze_label">ffprobe analyzeduration (us):</label></th>
+              <td><input id="ffprobe-analyze-input" type="number" min="0" step="1000"></td>
+            </tr>
+            <tr>
+              <th><label for="ffprobe-probesize-input" data-i18n="ffprobe_probesize_label">ffprobe probesize (bytes):</label></th>
+              <td><input id="ffprobe-probesize-input" type="number" min="32768" step="1024"></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="row perf-actions">
           <button id="save-runtime-settings-btn" data-i18n="save_settings_btn">Сохранить настройки</button>
           <button id="reset-runtime-settings-btn" data-i18n="reset_settings_btn">Сбросить по умолчанию</button>
           <span id="runtime-settings-status" class="selection-info"></span>
         </div>
       </div>
-      <ul id="roots-list" class="list"></ul>
     </section>
 
     <section id="tab-tree" class="panel">

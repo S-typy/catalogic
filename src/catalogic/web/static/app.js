@@ -16,9 +16,11 @@ const I18N = {
     settings_language_label: "Язык интерфейса:",
     language_ru: "Русский",
     language_en: "English",
+    root_add_path_label: "Путь для добавления:",
     root_input_placeholder: "/mnt/storage/media",
     open_picker_btn: "Выбрать каталог",
     add_root_btn: "Добавить путь",
+    scan_paths_title: "Пути сканирования",
     picker_up_btn: "Вверх",
     picker_select_btn: "Выбрать текущий",
     picker_close_btn: "Закрыть",
@@ -26,6 +28,7 @@ const I18N = {
     scan_mode_add_new: "Добавление новых",
     scan_mode_rebuild: "Пересоздание базы",
     follow_symlinks_label: "Следовать symlink-директориям:",
+    scanner_controls_label: "Управление сканером:",
     start_scan_btn: "Старт сканера",
     stop_scan_btn: "Стоп сканера",
     perf_settings_title: "Производительность сканера",
@@ -80,6 +83,10 @@ const I18N = {
     file_details_mime: "MIME",
     file_details_symlink: "Символическая ссылка",
     file_details_md5: "MD5",
+    file_preview_loading: "Загрузка превью...",
+    file_preview_not_available: "Превью недоступно для этого типа файла.",
+    file_preview_failed: "Не удалось загрузить превью файла.",
+    file_preview_video_seek_hint: "Перемотка перезапускает поток с выбранного момента.",
     file_details_video_meta: "Метаданные видео",
     file_details_audio_meta: "Метаданные аудио",
     file_details_image_meta: "Метаданные изображения",
@@ -131,9 +138,11 @@ const I18N = {
     settings_language_label: "UI language:",
     language_ru: "Russian",
     language_en: "English",
+    root_add_path_label: "Path to add:",
     root_input_placeholder: "/mnt/storage/media",
     open_picker_btn: "Choose folder",
     add_root_btn: "Add path",
+    scan_paths_title: "Scan paths",
     picker_up_btn: "Up",
     picker_select_btn: "Select current",
     picker_close_btn: "Close",
@@ -141,6 +150,7 @@ const I18N = {
     scan_mode_add_new: "Add new",
     scan_mode_rebuild: "Rebuild database",
     follow_symlinks_label: "Follow symlink directories:",
+    scanner_controls_label: "Scanner controls:",
     start_scan_btn: "Start scanner",
     stop_scan_btn: "Stop scanner",
     perf_settings_title: "Scanner Performance",
@@ -195,6 +205,10 @@ const I18N = {
     file_details_mime: "MIME",
     file_details_symlink: "Symbolic link",
     file_details_md5: "MD5",
+    file_preview_loading: "Loading preview...",
+    file_preview_not_available: "Preview is not available for this file type.",
+    file_preview_failed: "Failed to load file preview.",
+    file_preview_video_seek_hint: "Seeking reloads the stream from selected position.",
     file_details_video_meta: "Video metadata",
     file_details_audio_meta: "Audio metadata",
     file_details_image_meta: "Image metadata",
@@ -426,6 +440,18 @@ async function api(path, options = {}) {
     throw new Error(text || `HTTP ${response.status}`);
   }
   return response.json();
+}
+
+function buildApiUrl(path, query = {}) {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === "") {
+      return;
+    }
+    params.set(key, String(value));
+  });
+  const qs = params.toString();
+  return `${API_BASE}${path}${qs ? `?${qs}` : ""}`;
 }
 
 function switchTab(tabId) {
@@ -726,6 +752,109 @@ function toMetaText(meta) {
   return JSON.stringify(meta, null, 2);
 }
 
+function createFilePreviewNode(details) {
+  if (!details || !details.root_id || !details.path) {
+    return null;
+  }
+  const mime = String(details.mime || "").toLowerCase();
+  const container = document.createElement("div");
+  container.className = "file-preview-container";
+
+  if (mime.startsWith("image/")) {
+    const img = document.createElement("img");
+    img.className = "file-preview-image";
+    img.alt = details.name || details.path || "preview";
+    img.loading = "lazy";
+    img.src = buildApiUrl("/api/file/preview/image", {
+      root_id: details.root_id,
+      path: details.path,
+      width: 420,
+      height: 280,
+      quality: 45,
+    });
+    img.onerror = () => {
+      container.innerHTML = "";
+      const error = document.createElement("div");
+      error.className = "file-preview-note file-preview-error";
+      error.textContent = t("file_preview_failed");
+      container.appendChild(error);
+    };
+    container.appendChild(img);
+    return container;
+  }
+
+  if (mime.startsWith("video/")) {
+    const video = document.createElement("video");
+    video.className = "file-preview-video";
+    video.controls = true;
+    video.preload = "metadata";
+    const note = document.createElement("div");
+    note.className = "file-preview-note";
+    note.textContent = t("file_preview_video_seek_hint");
+
+    const buildVideoUrl = (startSec) =>
+      buildApiUrl("/api/file/preview/video", {
+        root_id: details.root_id,
+        path: details.path,
+        start_sec: Number.isFinite(startSec) ? Number(startSec).toFixed(3) : "0.000",
+        width: 640,
+        video_bitrate_kbps: 700,
+        audio_bitrate_kbps: 96,
+      });
+
+    let reloadingBySeek = false;
+    let skipNextSeeking = false;
+    const restartFrom = (startSec, autoplay) => {
+      reloadingBySeek = true;
+      skipNextSeeking = true;
+      video.src = buildVideoUrl(startSec);
+      video.load();
+      const done = () => {
+        reloadingBySeek = false;
+        if (autoplay) {
+          void video.play().catch(() => {});
+        }
+      };
+      video.addEventListener("loadedmetadata", done, { once: true });
+      video.addEventListener("error", () => {
+        reloadingBySeek = false;
+      }, { once: true });
+    };
+
+    video.addEventListener("seeking", () => {
+      if (reloadingBySeek) {
+        return;
+      }
+      if (skipNextSeeking) {
+        skipNextSeeking = false;
+        return;
+      }
+      const target = Number(video.currentTime);
+      if (!Number.isFinite(target) || target < 0.2) {
+        return;
+      }
+      restartFrom(target, !video.paused);
+    });
+
+    video.addEventListener("error", () => {
+      note.textContent = t("file_preview_failed");
+      note.classList.add("file-preview-error");
+    });
+
+    video.src = buildVideoUrl(0);
+
+    container.appendChild(video);
+    container.appendChild(note);
+    return container;
+  }
+
+  const unsupported = document.createElement("div");
+  unsupported.className = "file-preview-note";
+  unsupported.textContent = t("file_preview_not_available");
+  container.appendChild(unsupported);
+  return container;
+}
+
 function renderFileDetails(details) {
   const panel = $("file-details-panel");
   if (!panel) {
@@ -737,6 +866,11 @@ function renderFileDetails(details) {
   }
 
   panel.innerHTML = "";
+  const previewNode = createFilePreviewNode(details);
+  if (previewNode) {
+    panel.appendChild(previewNode);
+  }
+
   const grid = document.createElement("div");
   grid.className = "file-details-grid";
 
