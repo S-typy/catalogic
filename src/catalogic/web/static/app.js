@@ -1529,6 +1529,7 @@ function initImageViewer() {
   if (!overlay || !canvas || !selection || !zoomInBtn || !zoomOutBtn || !zoom100Btn || !fitBtn || !fragmentBtn || !closeBtn) {
     return;
   }
+  let imageMouseActive = false;
 
   const updateSelectionBox = (x1, y1, x2, y2) => {
     const left = Math.min(x1, x2);
@@ -1555,7 +1556,7 @@ function initImageViewer() {
     }
   };
 
-  canvas.addEventListener("pointerdown", (event) => {
+  canvas.addEventListener("mousedown", (event) => {
     if (!imageViewerState.open || event.button !== 0) {
       return;
     }
@@ -1577,10 +1578,14 @@ function initImageViewer() {
       imageViewerState.dragOriginOffsetY = imageViewerState.offsetY;
       updateImageViewerStatus();
     }
-    canvas.setPointerCapture(event.pointerId);
+    imageMouseActive = true;
+    event.preventDefault();
   });
 
-  canvas.addEventListener("pointermove", (event) => {
+  const moveMouseAction = (event) => {
+    if (!imageViewerState.open || !imageMouseActive) {
+      return;
+    }
     if (imageViewerState.dragging) {
       const point = clientToViewerCanvas(event.clientX, event.clientY);
       if (!point) {
@@ -1591,6 +1596,7 @@ function initImageViewer() {
       imageViewerState.offsetY =
         imageViewerState.dragOriginOffsetY + (point.y - imageViewerState.dragStartY);
       renderImageViewerTransform();
+      event.preventDefault();
       return;
     }
     if (!imageViewerState.selecting) {
@@ -1606,13 +1612,14 @@ function initImageViewer() {
       point.x,
       point.y
     );
-  });
+    event.preventDefault();
+  };
 
-  const finishPointerAction = (event) => {
-    const pointerId = event.pointerId;
-    if (canvas.hasPointerCapture(pointerId)) {
-      canvas.releasePointerCapture(pointerId);
+  const finishMouseAction = (event) => {
+    if (!imageMouseActive) {
+      return;
     }
+    imageMouseActive = false;
 
     if (imageViewerState.dragging) {
       imageViewerState.dragging = false;
@@ -1640,8 +1647,18 @@ function initImageViewer() {
     zoomImageViewerToSelection(left, top, width, height);
   };
 
-  canvas.addEventListener("pointerup", finishPointerAction);
-  canvas.addEventListener("pointercancel", finishPointerAction);
+  window.addEventListener("mousemove", moveMouseAction);
+  window.addEventListener("mouseup", finishMouseAction);
+  window.addEventListener("blur", () => {
+    imageMouseActive = false;
+    if (imageViewerState.dragging) {
+      imageViewerState.dragging = false;
+      updateImageViewerStatus();
+    }
+    if (imageViewerState.selecting) {
+      hideImageViewerSelection();
+    }
+  });
   canvas.addEventListener(
     "wheel",
     (event) => {
@@ -1674,6 +1691,7 @@ function initVideoViewer() {
   if (!overlay || !canvas || !player || !selection || !zoomInBtn || !zoomOutBtn || !zoom100Btn || !fitBtn || !fragmentBtn || !closeBtn) {
     return;
   }
+  let videoMouseActive = false;
 
   const updateSelectionBox = (x1, y1, x2, y2) => {
     const left = Math.min(x1, x2);
@@ -1700,7 +1718,7 @@ function initVideoViewer() {
     }
   };
 
-  const beginPointerAction = (event) => {
+  const beginMouseAction = (event) => {
     if (!videoViewerState.open) {
       return;
     }
@@ -1717,8 +1735,6 @@ function initVideoViewer() {
       videoViewerState.selectStartY = point.y;
       selection.classList.remove("hidden");
       updateSelectionBox(point.x, point.y, point.x, point.y);
-      videoViewerState.activePointerId = event.pointerId;
-      event.preventDefault();
     } else {
       if (isPointInVideoViewerControlZone(point)) {
         return;
@@ -1728,12 +1744,13 @@ function initVideoViewer() {
       videoViewerState.dragStartY = point.y;
       videoViewerState.dragOriginOffsetX = videoViewerState.offsetX;
       videoViewerState.dragOriginOffsetY = videoViewerState.offsetY;
-      videoViewerState.activePointerId = event.pointerId;
     }
+    videoMouseActive = true;
+    event.preventDefault();
   };
 
-  const movePointerAction = (event) => {
-    if (!videoViewerState.open || videoViewerState.activePointerId !== event.pointerId) {
+  const moveMouseAction = (event) => {
+    if (!videoViewerState.open || !videoMouseActive) {
       return;
     }
     if (videoViewerState.pendingPan) {
@@ -1779,10 +1796,11 @@ function initVideoViewer() {
     event.preventDefault();
   };
 
-  const finishPointerAction = (event) => {
-    if (!videoViewerState.open || videoViewerState.activePointerId !== event.pointerId) {
+  const finishMouseAction = (event) => {
+    if (!videoViewerState.open || !videoMouseActive) {
       return;
     }
+    videoMouseActive = false;
     videoViewerState.activePointerId = null;
 
     if (videoViewerState.pendingPan) {
@@ -1829,11 +1847,24 @@ function initVideoViewer() {
     applyVideoViewerScale(videoViewerState.scale * factor, point.x, point.y);
   };
 
-  canvas.addEventListener("pointerdown", beginPointerAction);
-  player.addEventListener("pointerdown", beginPointerAction);
-  window.addEventListener("pointermove", movePointerAction);
-  window.addEventListener("pointerup", finishPointerAction);
-  window.addEventListener("pointercancel", finishPointerAction);
+  canvas.addEventListener("mousedown", beginMouseAction);
+  player.addEventListener("mousedown", beginMouseAction);
+  window.addEventListener("mousemove", moveMouseAction);
+  window.addEventListener("mouseup", finishMouseAction);
+  window.addEventListener("blur", () => {
+    videoMouseActive = false;
+    videoViewerState.activePointerId = null;
+    if (videoViewerState.pendingPan) {
+      videoViewerState.pendingPan = false;
+    }
+    if (videoViewerState.dragging) {
+      videoViewerState.dragging = false;
+      updateVideoViewerStatus();
+    }
+    if (videoViewerState.selecting) {
+      hideVideoViewerSelection();
+    }
+  });
   canvas.addEventListener("wheel", wheelZoomAction, { passive: false });
   player.addEventListener("wheel", wheelZoomAction, { passive: false });
 }

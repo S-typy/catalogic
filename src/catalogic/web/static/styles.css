@@ -546,6 +546,7 @@ button {
   min-height: 0;
   overflow: hidden;
   cursor: grab;
+  user-select: none;
 }
 
 .video-viewer-canvas {
@@ -554,6 +555,7 @@ button {
   min-height: 0;
   overflow: hidden;
   cursor: default;
+  user-select: none;
 }
 
 .image-viewer-canvas.fragment-mode {
