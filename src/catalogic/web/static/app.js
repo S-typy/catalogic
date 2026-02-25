@@ -2061,6 +2061,19 @@ function scrollSelectedRowIntoView() {
   });
 }
 
+function updateFilesTableSelectionHighlight() {
+  const body = $("files-table-body");
+  if (!body) {
+    return;
+  }
+  const rows = body.querySelectorAll("tr[data-file-path][data-file-type]");
+  rows.forEach((row) => {
+    const isSelected =
+      row.dataset.filePath === selectedRowPath && row.dataset.fileType === selectedRowType;
+    row.classList.toggle("selected", isSelected);
+  });
+}
+
 function getSortedCurrentFiles() {
   return sortedFiles(currentFiles);
 }
@@ -2074,7 +2087,7 @@ function selectFileByIndex(index, { ensureVisible = true } = {}) {
   const item = rows[clamped];
   setSelectionFromRow(item);
   setFilesSelectionInfo(selectionInfoForRow(item));
-  renderFilesTable();
+  updateFilesTableSelectionHighlight();
   if (selectedDirContext && isFileRow(item)) {
     loadAndRenderFileDetails(selectedDirContext.rootId, item.path).catch(() => {
       setFileDetailsPlaceholder(t("file_details_error"));
@@ -2168,7 +2181,7 @@ async function activateFile(item) {
     return;
   }
   setSelectionFromRow(item);
-  renderFilesTable();
+  updateFilesTableSelectionHighlight();
   const copied = await tryCopyToClipboard(item.path);
   if (copied) {
     setFilesSelectionInfo(t("file_path_copied", { path: item.path }));
@@ -2236,7 +2249,7 @@ function renderFilesTable() {
     tr.onclick = () => {
       setSelectionFromRow(item);
       setFilesSelectionInfo(selectionInfoForRow(item));
-      renderFilesTable();
+      updateFilesTableSelectionHighlight();
       if (selectedDirContext && isFileRow(item)) {
         loadAndRenderFileDetails(selectedDirContext.rootId, item.path).catch(() => {
           setFileDetailsPlaceholder(t("file_details_error"));
