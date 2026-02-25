@@ -1197,13 +1197,22 @@ function applyRuntimeSettingsToForm(scanner) {
 }
 
 function collectRuntimeSettingsFromForm() {
+  const hashMode = $("hash-mode-select");
+  const hashThreshold = $("hash-threshold-input");
+  const hashChunk = $("hash-chunk-input");
+  const ffprobeTimeout = $("ffprobe-timeout-input");
+  const ffprobeAnalyze = $("ffprobe-analyze-input");
+  const ffprobeProbeSize = $("ffprobe-probesize-input");
+  if (!hashMode || !hashThreshold || !hashChunk || !ffprobeTimeout || !ffprobeAnalyze || !ffprobeProbeSize) {
+    throw new Error("Runtime settings controls are not available in DOM");
+  }
   return {
-    hash_mode: $("hash-mode-select").value,
-    hash_sample_threshold_mb: Number($("hash-threshold-input").value),
-    hash_sample_chunk_mb: Number($("hash-chunk-input").value),
-    ffprobe_timeout_sec: Number($("ffprobe-timeout-input").value),
-    ffprobe_analyze_duration_us: Number($("ffprobe-analyze-input").value),
-    ffprobe_probesize_bytes: Number($("ffprobe-probesize-input").value),
+    hash_mode: hashMode.value,
+    hash_sample_threshold_mb: Number(hashThreshold.value),
+    hash_sample_chunk_mb: Number(hashChunk.value),
+    ffprobe_timeout_sec: Number(ffprobeTimeout.value),
+    ffprobe_analyze_duration_us: Number(ffprobeAnalyze.value),
+    ffprobe_probesize_bytes: Number(ffprobeProbeSize.value),
   };
 }
 
@@ -1276,9 +1285,12 @@ async function refreshStatus() {
       emitted: status.emitted_records,
       skipped: status.skipped_files,
     });
-  $("scan-current-file").textContent = status.current_file
-    ? t("status_current_file", { path: status.current_file })
-    : t("status_current_file_none");
+  const currentFileNode = $("scan-current-file");
+  if (currentFileNode) {
+    currentFileNode.textContent = status.current_file
+      ? t("status_current_file", { path: status.current_file })
+      : t("status_current_file_none");
+  }
 
   const scanMode = $("scan-mode-select");
   const scanActive = status.state === "running" || status.desired_state === "running";
@@ -1432,20 +1444,26 @@ function bindActions() {
   };
 
   $("dups-refresh-btn").onclick = refreshDuplicates;
-  $("save-runtime-settings-btn").onclick = async () => {
-    try {
-      await saveRuntimeSettings({ resetDefaults: false });
-    } catch (err) {
-      setRuntimeSettingsStatus(t("err_settings_save_failed", { message: err.message }), true);
-    }
-  };
-  $("reset-runtime-settings-btn").onclick = async () => {
-    try {
-      await saveRuntimeSettings({ resetDefaults: true });
-    } catch (err) {
-      setRuntimeSettingsStatus(t("err_settings_save_failed", { message: err.message }), true);
-    }
-  };
+  const saveRuntimeBtn = $("save-runtime-settings-btn");
+  if (saveRuntimeBtn) {
+    saveRuntimeBtn.onclick = async () => {
+      try {
+        await saveRuntimeSettings({ resetDefaults: false });
+      } catch (err) {
+        setRuntimeSettingsStatus(t("err_settings_save_failed", { message: err.message }), true);
+      }
+    };
+  }
+  const resetRuntimeBtn = $("reset-runtime-settings-btn");
+  if (resetRuntimeBtn) {
+    resetRuntimeBtn.onclick = async () => {
+      try {
+        await saveRuntimeSettings({ resetDefaults: true });
+      } catch (err) {
+        setRuntimeSettingsStatus(t("err_settings_save_failed", { message: err.message }), true);
+      }
+    };
+  }
   $("state-refresh-btn").onclick = async () => {
     try {
       await refreshState();
@@ -1527,14 +1545,24 @@ async function bootstrap() {
   initBrowserPaneResize();
   bindActions();
   updateSortButtons();
-  await refreshRoots();
+  await refreshRoots().catch((err) => {
+    console.error("refreshRoots failed", err);
+  });
   await refreshRuntimeSettings().catch((err) => {
     setRuntimeSettingsStatus(t("err_settings_load_failed", { message: err.message }), true);
   });
-  await refreshStatus();
-  await refreshState();
-  await refreshTree();
-  await refreshDuplicates();
+  await refreshStatus().catch((err) => {
+    console.error("refreshStatus failed", err);
+  });
+  await refreshState().catch((err) => {
+    console.error("refreshState failed", err);
+  });
+  await refreshTree().catch((err) => {
+    console.error("refreshTree failed", err);
+  });
+  await refreshDuplicates().catch((err) => {
+    console.error("refreshDuplicates failed", err);
+  });
   setInterval(() => {
     refreshStatus().catch(() => {});
     const stateTab = $("tab-state");
