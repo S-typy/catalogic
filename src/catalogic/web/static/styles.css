@@ -52,7 +52,7 @@ body.viewer-open {
 }
 
 .hidden {
-  display: none;
+  display: none !important;
 }
 
 .tabs {
