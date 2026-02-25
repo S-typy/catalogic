@@ -128,6 +128,7 @@ const I18N = {
     no_files_in_dir: "Файлы в каталоге не найдены.",
     no_roots: "Нет добавленных путей сканирования.",
     no_search_results: "Ничего не найдено.",
+    search_tree_applied: "Результаты поиска ({count}) отображены в дереве.",
     status_worker_alive: "доступен",
     status_worker_offline: "офлайн",
     status_stale_na: "n/a",
@@ -270,6 +271,7 @@ const I18N = {
     no_files_in_dir: "No files found in this directory.",
     no_roots: "No scan paths configured.",
     no_search_results: "No results found.",
+    search_tree_applied: "Search results ({count}) are shown in the tree.",
     status_worker_alive: "alive",
     status_worker_offline: "offline",
     status_stale_na: "n/a",
@@ -305,6 +307,7 @@ let selectedDirContext = null;
 let selectedRowPath = null;
 let selectedRowType = null;
 let currentFiles = [];
+let searchTreeState = null;
 const fileSort = { key: "name", direction: "asc" };
 let currentLang = "ru";
 let previewAutostart = false;
@@ -837,22 +840,216 @@ function splitChildren(payload) {
   return { dirs: [], files: [] };
 }
 
+function clearSearchTreeState() {
+  searchTreeState = null;
+}
+
+function resetTreeSelectionAndFiles() {
+  treeCache.clear();
+  fileDetailsCache.clear();
+  selectedDirKey = null;
+  selectedDirContext = null;
+  selectedRowPath = null;
+  selectedRowType = null;
+  currentFiles = [];
+  updateFilesTitle();
+  setFilesSelectionInfo(t("files_selection_default"));
+  setFileDetailsPlaceholder(t("file_details_placeholder"));
+  renderFilesTable();
+}
+
+function renderTreeRoots(roots) {
+  const container = $("tree-result");
+  container.innerHTML = "";
+  if (!roots.length) {
+    container.textContent = t("no_roots");
+    return;
+  }
+  roots.forEach((root) => {
+    const rootNode = createDirNode(
+      {
+        name: `[${root.id}] ${root.path}`,
+        path: root.path,
+        type: "dir",
+      },
+      root.id
+    );
+    container.appendChild(rootNode);
+  });
+}
+
+function partsInsideRoot(path, rootPath) {
+  const normalizedPath = normalizePath(path);
+  const normalizedRoot = normalizePath(rootPath);
+  if (normalizedPath === normalizedRoot) {
+    return [];
+  }
+  if (normalizedRoot === "/") {
+    const rel = normalizedPath.startsWith("/") ? normalizedPath.slice(1) : normalizedPath;
+    return rel ? rel.split("/").filter(Boolean) : [];
+  }
+  const prefix = `${normalizedRoot}/`;
+  if (!normalizedPath.startsWith(prefix)) {
+    return [];
+  }
+  const rel = normalizedPath.slice(prefix.length);
+  return rel ? rel.split("/").filter(Boolean) : [];
+}
+
+function matchRootForPath(path, rootsSorted) {
+  const normalizedPath = normalizePath(path);
+  for (const root of rootsSorted) {
+    const rootPath = root.normalizedPath;
+    if (normalizedPath === rootPath || normalizedPath.startsWith(`${rootPath}/`)) {
+      return root;
+    }
+  }
+  return null;
+}
+
+function buildSearchTreeState(roots, items) {
+  const candidates = (roots || [])
+    .map((root) => ({
+      id: Number(root.id),
+      path: normalizePath(root.path),
+      normalizedPath: normalizePath(root.path),
+    }))
+    .filter((root) => Number.isFinite(root.id) && root.path);
+  candidates.sort((a, b) => b.normalizedPath.length - a.normalizedPath.length);
+
+  const nodeMap = new Map();
+  const rootsById = new Map();
+  const matchedRootIds = new Set();
+  let matchedFilesCount = 0;
+
+  const ensureNode = (root, dirPath) => {
+    const normalizedDirPath = normalizePath(dirPath);
+    const key = treeKey(root.id, normalizedDirPath);
+    if (!nodeMap.has(key)) {
+      nodeMap.set(key, {
+        rootId: root.id,
+        rootPath: root.path,
+        dirPath: normalizedDirPath,
+        dirs: [],
+        files: [],
+        _dirKeys: new Set(),
+        _fileKeys: new Set(),
+      });
+    }
+    return nodeMap.get(key);
+  };
+
+  for (const item of items || []) {
+    const filePath = normalizePath(item.path || "");
+    if (!filePath || filePath === "/") {
+      continue;
+    }
+    const root = matchRootForPath(filePath, candidates);
+    if (!root) {
+      continue;
+    }
+
+    matchedRootIds.add(root.id);
+    rootsById.set(root.id, { id: root.id, path: root.path });
+    ensureNode(root, root.path);
+
+    const rawParentPath = normalizePath(getParentPath(filePath));
+    const parentPath = isInsideRoot(rawParentPath, root.path) ? rawParentPath : root.path;
+
+    const parts = partsInsideRoot(parentPath, root.path);
+    let current = root.path;
+    for (const part of parts) {
+      const next = current === "/" ? `/${part}` : `${current}/${part}`;
+      const parentNode = ensureNode(root, current);
+      ensureNode(root, next);
+      const dirKey = treeKey(root.id, next);
+      if (!parentNode._dirKeys.has(dirKey)) {
+        parentNode._dirKeys.add(dirKey);
+        parentNode.dirs.push({
+          name: part,
+          path: next,
+          type: "dir",
+        });
+      }
+      current = next;
+    }
+
+    const parentNode = ensureNode(root, parentPath);
+    const fileKey = treeKey(root.id, filePath);
+    if (!parentNode._fileKeys.has(fileKey)) {
+      parentNode._fileKeys.add(fileKey);
+      parentNode.files.push({
+        name: item.name || filePath.split("/").pop() || filePath,
+        path: filePath,
+        type: "file",
+        size: item.size,
+        mtime: item.mtime,
+      });
+      matchedFilesCount += 1;
+    }
+  }
+
+  for (const node of nodeMap.values()) {
+    node.dirs.sort((a, b) =>
+      String(a.name || "").localeCompare(String(b.name || ""), currentLang, { sensitivity: "base" })
+    );
+    node.files.sort((a, b) =>
+      String(a.name || "").localeCompare(String(b.name || ""), currentLang, { sensitivity: "base" })
+    );
+    delete node._dirKeys;
+    delete node._fileKeys;
+  }
+
+  const rootsWithMatches = candidates
+    .filter((root) => matchedRootIds.has(root.id))
+    .map((root) => ({ id: root.id, path: root.path }));
+
+  return {
+    nodes: nodeMap,
+    roots: rootsWithMatches,
+    rootsById,
+    count: matchedFilesCount,
+  };
+}
+
 async function getDirData(rootId, dirPath, force = false) {
-  const key = treeKey(rootId, dirPath);
+  const normalizedDirPath = normalizePath(dirPath);
+  const key = treeKey(rootId, normalizedDirPath);
+  if (searchTreeState) {
+    const node = searchTreeState.nodes.get(key);
+    const root = searchTreeState.rootsById.get(Number(rootId));
+    if (node) {
+      return {
+        rootId: Number(node.rootId),
+        rootPath: normalizePath(node.rootPath),
+        dirPath: normalizePath(node.dirPath),
+        dirs: [...(node.dirs || [])],
+        files: [...(node.files || [])],
+      };
+    }
+    return {
+      rootId: Number(rootId),
+      rootPath: normalizePath(root?.path || normalizedDirPath),
+      dirPath: normalizedDirPath,
+      dirs: [],
+      files: [],
+    };
+  }
+
   if (!force && treeCache.has(key)) {
     return treeCache.get(key);
   }
 
   const query = new URLSearchParams({
     root_id: String(rootId),
-    dir_path: dirPath,
+    dir_path: normalizedDirPath,
   });
   const payload = await api(`/api/tree/children?${query.toString()}`);
   const split = splitChildren(payload);
   const data = {
     rootId: Number(payload.root_id || rootId),
-    rootPath: payload.root_path || dirPath,
-    dirPath: payload.dir_path || dirPath,
+    rootPath: payload.root_path || normalizedDirPath,
+    dirPath: payload.dir_path || normalizedDirPath,
     dirs: split.dirs,
     files: split.files,
   };
@@ -2619,59 +2816,44 @@ function createDirNode(item, rootId) {
 }
 
 async function refreshTree() {
-  const roots = await api("/api/roots");
-  treeCache.clear();
-  fileDetailsCache.clear();
-  selectedDirKey = null;
-  selectedDirContext = null;
-  selectedRowPath = null;
-  selectedRowType = null;
-  currentFiles = [];
-  updateFilesTitle();
-  setFilesSelectionInfo(t("files_selection_default"));
-  setFileDetailsPlaceholder(t("file_details_placeholder"));
-  renderFilesTable();
-
-  const container = $("tree-result");
-  container.innerHTML = "";
-  if (!roots.length) {
-    container.textContent = t("no_roots");
-    return;
+  clearSearchTreeState();
+  const searchBox = $("tree-search-result");
+  if (searchBox) {
+    searchBox.textContent = "";
   }
 
-  roots.forEach((root) => {
-    const rootNode = createDirNode(
-      {
-        name: `[${root.id}] ${root.path}`,
-        path: root.path,
-        type: "dir",
-      },
-      root.id
-    );
-    container.appendChild(rootNode);
-  });
+  const roots = await api("/api/roots");
+  resetTreeSelectionAndFiles();
+  renderTreeRoots(roots);
 }
 
 async function runTreeSearch() {
   const pattern = $("tree-search-input").value.trim();
-  if (!pattern) return;
-  const data = await api(`/api/search?pattern=${encodeURIComponent(pattern)}`);
+  if (!pattern) {
+    await refreshTree();
+    return;
+  }
+
+  const [data, roots] = await Promise.all([
+    api(`/api/search?pattern=${encodeURIComponent(pattern)}`),
+    api("/api/roots"),
+  ]);
   const box = $("tree-search-result");
   box.innerHTML = "";
   const items = data.items || [];
-  if (!items.length) {
+  const built = buildSearchTreeState(roots, items);
+  if (!built.roots.length) {
+    clearSearchTreeState();
+    resetTreeSelectionAndFiles();
+    $("tree-result").textContent = t("no_search_results");
     box.textContent = t("no_search_results");
     return;
   }
 
-  const ul = document.createElement("ul");
-  ul.className = "search-list";
-  items.forEach((item) => {
-    const li = document.createElement("li");
-    li.textContent = `${item.path} (${formatSize(item.size)})`;
-    ul.appendChild(li);
-  });
-  box.appendChild(ul);
+  searchTreeState = built;
+  resetTreeSelectionAndFiles();
+  renderTreeRoots(built.roots);
+  box.textContent = t("search_tree_applied", { count: built.count });
 }
 
 async function refreshDuplicates() {
