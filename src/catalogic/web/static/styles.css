@@ -540,6 +540,18 @@ button {
   white-space: nowrap;
 }
 
+.video-viewer-seek {
+  width: clamp(140px, 22vw, 360px);
+  accent-color: #38bdf8;
+}
+
+.video-viewer-time {
+  min-width: 96px;
+  color: #cbd5e1;
+  font-size: 12px;
+  text-align: right;
+}
+
 .image-viewer-canvas {
   position: relative;
   flex: 1;
@@ -607,8 +619,8 @@ button {
   max-width: none;
   max-height: none;
   background: #000;
-  border: 1px solid #334155;
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
   user-select: none;
 }
 

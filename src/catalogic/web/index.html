@@ -223,11 +223,14 @@
       <button id="video-viewer-zoom-100-btn" type="button" data-i18n="viewer_btn_100">100%</button>
       <button id="video-viewer-fit-btn" type="button" data-i18n="viewer_btn_fit">По экрану</button>
       <button id="video-viewer-fragment-btn" type="button" data-i18n="viewer_btn_fragment">Фрагмент</button>
+      <button id="video-viewer-play-btn" type="button" data-i18n="video_viewer_btn_play">Воспроизв.</button>
+      <input id="video-viewer-seek" class="video-viewer-seek" type="range" min="0" max="1000" step="1" value="0">
+      <span id="video-viewer-time" class="video-viewer-time">--:-- / --:--</span>
       <button id="video-viewer-close-btn" type="button" data-i18n="video_viewer_btn_close">Закрыть</button>
       <span id="video-viewer-status" class="video-viewer-status"></span>
     </div>
     <div id="video-viewer-canvas" class="video-viewer-canvas">
-      <video id="video-viewer-player" class="video-viewer-player" controls preload="metadata"></video>
+      <video id="video-viewer-player" class="video-viewer-player" preload="metadata"></video>
       <div id="video-viewer-selection" class="video-viewer-selection hidden"></div>
     </div>
   </div>

@@ -103,6 +103,8 @@ const I18N = {
     viewer_status_scale: "Масштаб: {percent}%",
     viewer_status_scale_fragment: "Масштаб: {percent}% | выделение",
     viewer_open_failed: "Не удалось открыть просмотрщик: {message}",
+    video_viewer_btn_play: "Воспроизв.",
+    video_viewer_btn_pause: "Пауза",
     video_viewer_btn_close: "Закрыть",
     video_viewer_status_loading: "Открытие видео...",
     video_viewer_status_ready: "Готово к воспроизведению",
@@ -243,6 +245,8 @@ const I18N = {
     viewer_status_scale: "Zoom: {percent}%",
     viewer_status_scale_fragment: "Zoom: {percent}% | selection",
     viewer_open_failed: "Failed to open viewer: {message}",
+    video_viewer_btn_play: "Play",
+    video_viewer_btn_pause: "Pause",
     video_viewer_btn_close: "Close",
     video_viewer_status_loading: "Opening video...",
     video_viewer_status_ready: "Ready to play",
@@ -343,6 +347,7 @@ const videoViewerState = {
   selectStartX: 0,
   selectStartY: 0,
   activePointerId: null,
+  seekDragging: false,
   statusNote: "",
   hasInitialLayout: false,
   fallbackUsed: false,
@@ -482,6 +487,7 @@ function setLanguage(lang) {
   }
   if (videoViewerState.open) {
     updateVideoViewerStatus();
+    updateVideoViewerPlaybackControls();
   }
 }
 
@@ -1112,6 +1118,85 @@ function updateVideoViewerStatus() {
   canvas.classList.toggle("panning", videoViewerState.dragging);
 }
 
+function formatVideoViewerClock(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "--:--";
+  }
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function updateVideoViewerPlaybackControls({ previewTimeSec = null } = {}) {
+  const player = $("video-viewer-player");
+  const playBtn = $("video-viewer-play-btn");
+  const seek = $("video-viewer-seek");
+  const time = $("video-viewer-time");
+  if (!player || !playBtn || !seek || !time) {
+    return;
+  }
+
+  playBtn.textContent = player.paused ? t("video_viewer_btn_play") : t("video_viewer_btn_pause");
+
+  const duration = Number(player.duration);
+  const hasDuration = Number.isFinite(duration) && duration > 0;
+  const currentFromPlayer = Number(player.currentTime);
+  const current = Number.isFinite(previewTimeSec) ? previewTimeSec : currentFromPlayer;
+
+  if (!hasDuration) {
+    seek.disabled = true;
+    seek.value = "0";
+    time.textContent = `${formatVideoViewerClock(current)} / --:--`;
+    return;
+  }
+
+  seek.disabled = false;
+  if (!videoViewerState.seekDragging || Number.isFinite(previewTimeSec)) {
+    const ratio = Math.max(0, Math.min(1, (Number.isFinite(current) ? current : 0) / duration));
+    seek.value = String(Math.round(ratio * 1000));
+  }
+  time.textContent = `${formatVideoViewerClock(current)} / ${formatVideoViewerClock(duration)}`;
+}
+
+function restartVideoViewerFallbackFrom(startSec, autoplay) {
+  const player = $("video-viewer-player");
+  if (!player || !videoViewerState.open || !videoViewerState.fallbackUsed) {
+    return;
+  }
+  if (!Number.isFinite(videoViewerState.rootId) || !videoViewerState.path) {
+    return;
+  }
+  videoViewerState.fallbackReloading = true;
+  videoViewerState.fallbackSkipNextSeeking = true;
+  player.src = buildVideoViewerPreviewUrl(videoViewerState.rootId, videoViewerState.path, startSec);
+  player.load();
+  player.addEventListener(
+    "loadedmetadata",
+    () => {
+      videoViewerState.fallbackReloading = false;
+      if (autoplay) {
+        void player.play().catch(() => {});
+      }
+      updateVideoViewerPlaybackControls();
+    },
+    { once: true }
+  );
+  player.addEventListener(
+    "error",
+    () => {
+      videoViewerState.fallbackReloading = false;
+      videoViewerState.statusNote = t("video_viewer_status_error");
+      updateVideoViewerStatus();
+    },
+    { once: true }
+  );
+}
+
 function renderVideoViewerTransform() {
   const player = $("video-viewer-player");
   if (!player) {
@@ -1273,6 +1358,7 @@ function closeVideoViewer() {
   videoViewerState.pendingPan = false;
   videoViewerState.dragging = false;
   videoViewerState.activePointerId = null;
+  videoViewerState.seekDragging = false;
   videoViewerState.statusNote = "";
   videoViewerState.hasInitialLayout = false;
   videoViewerState.fallbackUsed = false;
@@ -1281,12 +1367,19 @@ function closeVideoViewer() {
   hideVideoViewerSelection();
   player.pause();
   player.onloadedmetadata = null;
+  player.onplay = null;
+  player.onpause = null;
+  player.ontimeupdate = null;
+  player.ondurationchange = null;
+  player.onended = null;
   player.onerror = null;
   player.onseeking = null;
+  player.controls = false;
   player.style.transform = "";
   player.removeAttribute("src");
   player.load();
   status.textContent = "";
+  updateVideoViewerPlaybackControls();
   overlay.classList.add("hidden");
   if (canvas) {
     canvas.classList.remove("fragment-mode");
@@ -1392,6 +1485,7 @@ function openVideoViewer(rootId, path, name) {
   videoViewerState.pendingPan = false;
   videoViewerState.dragging = false;
   videoViewerState.activePointerId = null;
+  videoViewerState.seekDragging = false;
   videoViewerState.statusNote = t("video_viewer_status_loading");
   videoViewerState.hasInitialLayout = false;
   videoViewerState.fallbackUsed = false;
@@ -1401,6 +1495,8 @@ function openVideoViewer(rootId, path, name) {
   overlay.classList.remove("hidden");
   syncViewerBodyState();
   updateVideoViewerStatus();
+  updateVideoViewerPlaybackControls();
+  player.controls = false;
   player.title = name || path || "video";
 
   const sourceUrl = buildApiUrl("/api/file/view/video", {
@@ -1409,35 +1505,6 @@ function openVideoViewer(rootId, path, name) {
     t: Date.now(),
   });
   const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0);
-
-  const restartFallbackFrom = (startSec, autoplay) => {
-    if (!videoViewerState.open || !videoViewerState.fallbackUsed) {
-      return;
-    }
-    videoViewerState.fallbackReloading = true;
-    videoViewerState.fallbackSkipNextSeeking = true;
-    player.src = buildVideoViewerPreviewUrl(rootId, path, startSec);
-    player.load();
-    player.addEventListener(
-      "loadedmetadata",
-      () => {
-        videoViewerState.fallbackReloading = false;
-        if (autoplay) {
-          void player.play().catch(() => {});
-        }
-      },
-      { once: true }
-    );
-    player.addEventListener(
-      "error",
-      () => {
-        videoViewerState.fallbackReloading = false;
-        videoViewerState.statusNote = t("video_viewer_status_error");
-        updateVideoViewerStatus();
-      },
-      { once: true }
-    );
-  };
 
   player.onloadedmetadata = () => {
     videoViewerState.naturalWidth = player.videoWidth || videoViewerState.naturalWidth;
@@ -1452,7 +1519,13 @@ function openVideoViewer(rootId, path, name) {
       ? `${t("video_viewer_status_fallback")} ${t("file_preview_video_seek_hint")}`.trim()
       : t("video_viewer_status_ready");
     updateVideoViewerStatus();
+    updateVideoViewerPlaybackControls();
   };
+  player.onplay = () => updateVideoViewerPlaybackControls();
+  player.onpause = () => updateVideoViewerPlaybackControls();
+  player.ontimeupdate = () => updateVideoViewerPlaybackControls();
+  player.ondurationchange = () => updateVideoViewerPlaybackControls();
+  player.onended = () => updateVideoViewerPlaybackControls();
   player.onseeking = () => {
     if (!videoViewerState.fallbackUsed || videoViewerState.fallbackReloading) {
       return;
@@ -1465,7 +1538,7 @@ function openVideoViewer(rootId, path, name) {
     if (!Number.isFinite(target) || target < 0.2) {
       return;
     }
-    restartFallbackFrom(target, !player.paused);
+    restartVideoViewerFallbackFrom(target, !player.paused);
   };
   player.onerror = () => {
     if (videoViewerState.fallbackReloading) {
@@ -1478,14 +1551,17 @@ function openVideoViewer(rootId, path, name) {
       player.src = fallbackUrl;
       player.load();
       void player.play().catch(() => {});
+      updateVideoViewerPlaybackControls();
       return;
     }
     videoViewerState.statusNote = t("video_viewer_status_error");
     updateVideoViewerStatus();
+    updateVideoViewerPlaybackControls();
   };
   player.src = sourceUrl;
   player.load();
   void player.play().catch(() => {});
+  updateVideoViewerPlaybackControls();
 }
 
 function clientToViewerCanvas(clientX, clientY) {
@@ -1687,8 +1763,11 @@ function initVideoViewer() {
   const zoom100Btn = $("video-viewer-zoom-100-btn");
   const fitBtn = $("video-viewer-fit-btn");
   const fragmentBtn = $("video-viewer-fragment-btn");
+  const playBtn = $("video-viewer-play-btn");
+  const seek = $("video-viewer-seek");
+  const time = $("video-viewer-time");
   const closeBtn = $("video-viewer-close-btn");
-  if (!overlay || !canvas || !player || !selection || !zoomInBtn || !zoomOutBtn || !zoom100Btn || !fitBtn || !fragmentBtn || !closeBtn) {
+  if (!overlay || !canvas || !player || !selection || !zoomInBtn || !zoomOutBtn || !zoom100Btn || !fitBtn || !fragmentBtn || !playBtn || !seek || !time || !closeBtn) {
     return;
   }
   let videoMouseActive = false;
@@ -1710,6 +1789,53 @@ function initVideoViewer() {
   fitBtn.onclick = () => fitVideoViewerToScreen();
   fragmentBtn.onclick = () => {
     setVideoViewerFragmentMode(!videoViewerState.fragmentMode);
+  };
+  playBtn.onclick = () => {
+    if (!videoViewerState.open) {
+      return;
+    }
+    if (player.paused) {
+      void player.play().catch(() => {});
+    } else {
+      player.pause();
+    }
+    updateVideoViewerPlaybackControls();
+  };
+  seek.onmousedown = () => {
+    videoViewerState.seekDragging = true;
+  };
+  seek.oninput = () => {
+    if (!videoViewerState.open) {
+      return;
+    }
+    const duration = Number(player.duration);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, Number(seek.value) / 1000));
+    updateVideoViewerPlaybackControls({ previewTimeSec: duration * ratio });
+  };
+  seek.onchange = () => {
+    if (!videoViewerState.open) {
+      return;
+    }
+    const duration = Number(player.duration);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, Number(seek.value) / 1000));
+    const target = duration * ratio;
+    videoViewerState.seekDragging = false;
+    if (videoViewerState.fallbackUsed) {
+      restartVideoViewerFallbackFrom(target, !player.paused);
+      updateVideoViewerPlaybackControls({ previewTimeSec: target });
+      return;
+    }
+    player.currentTime = target;
+    updateVideoViewerPlaybackControls();
+  };
+  seek.onmouseup = () => {
+    videoViewerState.seekDragging = false;
   };
   closeBtn.onclick = () => closeVideoViewer();
   overlay.onclick = (event) => {
@@ -1854,6 +1980,7 @@ function initVideoViewer() {
   window.addEventListener("blur", () => {
     videoMouseActive = false;
     videoViewerState.activePointerId = null;
+    videoViewerState.seekDragging = false;
     if (videoViewerState.pendingPan) {
       videoViewerState.pendingPan = false;
     }
