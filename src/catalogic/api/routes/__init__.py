@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from io import BytesIO
 from dataclasses import asdict
+import logging
 import mimetypes
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -26,6 +28,8 @@ from catalogic.app import (
     list_tree_children,
     search_files,
 )
+
+logger = logging.getLogger("catalogic.api")
 
 
 class RootCreateRequest(BaseModel):
@@ -273,10 +277,23 @@ def create_api_router() -> APIRouter:
         root_id: int = Query(ge=1),
         path: str = Query(min_length=1),
     ) -> dict[str, Any]:
+        started = time.perf_counter()
+        logger.info("file.details request root_id=%s path=%s", root_id, path)
         db_path = request.app.state.db_path
         details = get_file_details(db_path, root_id=root_id, path=path)
         if details is None:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            logger.warning("file.details not_found root_id=%s path=%s elapsed_ms=%.1f", root_id, path, elapsed_ms)
             raise HTTPException(status_code=404, detail="File not found")
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        logger.info(
+            "file.details ok root_id=%s path=%s elapsed_ms=%.1f size=%s mime=%s",
+            root_id,
+            path,
+            elapsed_ms,
+            details.get("size"),
+            details.get("mime"),
+        )
         return details
 
     @router.get("/file/preview/image")
@@ -472,8 +489,12 @@ def create_api_router() -> APIRouter:
         limit: int = Query(default=200, ge=1, le=5000),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
+        started = time.perf_counter()
+        logger.info("search request pattern=%r limit=%s offset=%s", pattern, limit, offset)
         db_path = request.app.state.db_path
         results = search_files(db_path, pattern, limit=limit, offset=offset)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        logger.info("search ok pattern=%r count=%s elapsed_ms=%.1f", pattern, len(results), elapsed_ms)
         return {"items": results, "count": len(results)}
 
     @router.get("/duplicates")

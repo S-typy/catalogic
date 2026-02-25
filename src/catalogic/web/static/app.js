@@ -82,6 +82,7 @@ const I18N = {
     loading_file_details: "Загрузка информации о файле...",
     no_file_data: "Нет данных по выбранному файлу.",
     file_details_error: "Не удалось загрузить детальную информацию о файле.",
+    file_details_timeout: "Превышено время ожидания загрузки информации о файле.",
     file_details_path: "Путь",
     file_details_name: "Имя",
     file_details_size: "Размер",
@@ -225,6 +226,7 @@ const I18N = {
     loading_file_details: "Loading file details...",
     no_file_data: "No data for selected file.",
     file_details_error: "Failed to load file details.",
+    file_details_timeout: "Timed out while loading file details.",
     file_details_path: "Path",
     file_details_name: "Name",
     file_details_size: "Size",
@@ -308,6 +310,7 @@ let selectedRowPath = null;
 let selectedRowType = null;
 let currentFiles = [];
 let searchTreeState = null;
+let fileDetailsRequestVersion = 0;
 const fileSort = { key: "name", direction: "asc" };
 let currentLang = "ru";
 let previewAutostart = false;
@@ -844,7 +847,12 @@ function clearSearchTreeState() {
   searchTreeState = null;
 }
 
+function invalidateFileDetailsRequests() {
+  fileDetailsRequestVersion += 1;
+}
+
 function resetTreeSelectionAndFiles() {
+  invalidateFileDetailsRequests();
   treeCache.clear();
   fileDetailsCache.clear();
   selectedDirKey = null;
@@ -2398,19 +2406,48 @@ async function getFileDetails(rootId, path, force = false) {
   if (!force && fileDetailsCache.has(key)) {
     return fileDetailsCache.get(key);
   }
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 15000);
   const query = new URLSearchParams({ root_id: String(rootId), path });
-  const payload = await api(`/api/file/details?${query.toString()}`);
-  fileDetailsCache.set(key, payload);
-  return payload;
+  try {
+    const payload = await api(`/api/file/details?${query.toString()}`, { signal: controller.signal });
+    fileDetailsCache.set(key, payload);
+    return payload;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(t("file_details_timeout"));
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 async function loadAndRenderFileDetails(rootId, path) {
+  const requestVersion = ++fileDetailsRequestVersion;
   setFileDetailsPlaceholder(t("loading_file_details"));
-  const details = await getFileDetails(rootId, path);
-  if (selectedRowType !== "file" || selectedRowPath !== path) {
-    return;
+  try {
+    const details = await getFileDetails(rootId, path);
+    if (requestVersion !== fileDetailsRequestVersion) {
+      return;
+    }
+    if (
+      selectedRowType !== "file" ||
+      selectedRowPath !== path ||
+      !selectedDirContext ||
+      Number(selectedDirContext.rootId) !== Number(rootId)
+    ) {
+      setFileDetailsPlaceholder(t("file_details_placeholder"));
+      return;
+    }
+    renderFileDetails(details);
+  } catch (err) {
+    if (requestVersion !== fileDetailsRequestVersion) {
+      return;
+    }
+    setFileDetailsPlaceholder(t("file_details_error"));
+    throw err;
   }
-  renderFileDetails(details);
 }
 
 function scrollSelectedRowIntoView() {
@@ -2461,6 +2498,7 @@ function selectFileByIndex(index, { ensureVisible = true } = {}) {
       setFileDetailsPlaceholder(t("file_details_error"));
     });
   } else {
+    invalidateFileDetailsRequests();
     setFileDetailsPlaceholder(t("file_details_placeholder"));
   }
   if (ensureVisible) {
@@ -2623,6 +2661,7 @@ function renderFilesTable() {
           setFileDetailsPlaceholder(t("file_details_error"));
         });
       } else {
+        invalidateFileDetailsRequests();
         setFileDetailsPlaceholder(t("file_details_placeholder"));
       }
     };
@@ -2709,6 +2748,7 @@ async function selectDirectory(rootId, dirPath) {
   selectedDirKey = treeKey(rootId, selectedDirContext.dirPath);
   selectedRowPath = null;
   selectedRowType = null;
+  invalidateFileDetailsRequests();
   currentFiles = rows;
   updateFilesTitle();
   setFilesSelectionInfo(t("files_selection_default"));
@@ -3068,6 +3108,7 @@ function bindActions() {
       }
       setFilesSelectionInfo(t("file_selected", { path: selectedRowPath }));
     } else {
+      invalidateFileDetailsRequests();
       setFileDetailsPlaceholder(t("file_details_placeholder"));
       if (!selectedRowPath || !selectedRowType) {
         setFilesSelectionInfo(t("files_selection_default"));
