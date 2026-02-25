@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from typing import Any
 
 from catalogic.core.entities import FileRecord
 
@@ -35,7 +36,11 @@ def _get_stat_metadata(path: Path) -> tuple[int, float, float, bool] | None:
         return None
 
 
-def get_file_record(path: Path | str) -> FileRecord | None:
+def get_file_record(
+    path: Path | str,
+    *,
+    scanner_settings: dict[str, Any] | None = None,
+) -> FileRecord | None:
     """
     Собирает полную запись о файле:
     имя (из пути), полный путь, размер, дата создания, дата изменения,
@@ -52,7 +57,7 @@ def get_file_record(path: Path | str) -> FileRecord | None:
     size, mtime, ctime, is_symlink = raw
 
     mime = get_mime(path)
-    md5 = compute_md5(path, size_hint=size)
+    md5 = compute_md5(path, size_hint=size, scanner_settings=scanner_settings)
 
     video_meta = None
     audio_meta = None
@@ -60,9 +65,9 @@ def get_file_record(path: Path | str) -> FileRecord | None:
 
     if mime:
         if mime.startswith(VIDEO_MIME_PREFIXES):
-            video_meta = get_video_metadata(path)
+            video_meta = get_video_metadata(path, scanner_settings=scanner_settings)
         elif mime.startswith(AUDIO_MIME_PREFIXES):
-            audio_meta = get_audio_metadata(path)
+            audio_meta = get_audio_metadata(path, scanner_settings=scanner_settings)
         elif mime.startswith(IMAGE_MIME_PREFIXES):
             image_meta = get_image_metadata(path)
 
@@ -86,6 +91,7 @@ def get_file_record_with_cached_md5(
     cached_size: int | None,
     cached_mtime: float | None,
     cached_md5: str | None,
+    scanner_settings: dict[str, Any] | None = None,
 ) -> FileRecord | None:
     """
     Как get_file_record, но переиспользует ранее вычисленный MD5, если файл не изменился.
@@ -103,7 +109,7 @@ def get_file_record_with_cached_md5(
     if cached_md5 and cached_size == size and cached_mtime == mtime:
         md5 = cached_md5
     else:
-        md5 = compute_md5(path_obj, size_hint=size)
+        md5 = compute_md5(path_obj, size_hint=size, scanner_settings=scanner_settings)
 
     video_meta = None
     audio_meta = None
@@ -111,9 +117,9 @@ def get_file_record_with_cached_md5(
 
     if mime:
         if mime.startswith(VIDEO_MIME_PREFIXES):
-            video_meta = get_video_metadata(path_obj)
+            video_meta = get_video_metadata(path_obj, scanner_settings=scanner_settings)
         elif mime.startswith(AUDIO_MIME_PREFIXES):
-            audio_meta = get_audio_metadata(path_obj)
+            audio_meta = get_audio_metadata(path_obj, scanner_settings=scanner_settings)
         elif mime.startswith(IMAGE_MIME_PREFIXES):
             image_meta = get_image_metadata(path_obj)
 

@@ -28,6 +28,20 @@ const I18N = {
     follow_symlinks_label: "Следовать symlink-директориям:",
     start_scan_btn: "Старт сканера",
     stop_scan_btn: "Стоп сканера",
+    perf_settings_title: "Производительность сканера",
+    hash_mode_label: "Режим хэша:",
+    hash_mode_auto: "Авто",
+    hash_mode_full: "Полный MD5",
+    hash_mode_sample: "Сэмплированный",
+    hash_threshold_label: "Порог sample (MB):",
+    hash_chunk_label: "Размер sample блока (MB):",
+    ffprobe_timeout_label: "ffprobe timeout (sec):",
+    ffprobe_analyze_label: "ffprobe analyzeduration (us):",
+    ffprobe_probesize_label: "ffprobe probesize (bytes):",
+    save_settings_btn: "Сохранить настройки",
+    reset_settings_btn: "Сбросить по умолчанию",
+    runtime_settings_saved: "Настройки сканера сохранены.",
+    runtime_settings_reset: "Настройки сканера сброшены к значениям по умолчанию.",
     tree_title: "Просмотр дерева",
     tree_search_placeholder: "Поиск по имени (*, ?)",
     tree_search_btn: "Искать",
@@ -86,6 +100,8 @@ const I18N = {
     status_stale_na: "n/a",
     status_line:
       "статус: {state} (ожидается: {desired}), режим: {mode}, worker: {worker} [stale={stale}], обработано: {processed}, сохранено: {emitted}, пропущено: {skipped}",
+    status_current_file: "текущий файл: {path}",
+    status_current_file_none: "текущий файл: нет",
     scan_state_idle: "ожидание",
     scan_state_running: "в работе",
     scan_state_stopped: "остановлен",
@@ -101,6 +117,8 @@ const I18N = {
     err_search_failed: "Не удалось выполнить поиск: {message}",
     err_state_refresh_failed: "Не удалось обновить состояние: {message}",
     err_ui_init_failed: "Ошибка инициализации UI: {message}",
+    err_settings_load_failed: "Не удалось загрузить настройки: {message}",
+    err_settings_save_failed: "Не удалось сохранить настройки: {message}",
   },
   en: {
     app_title: "Catalogic STEP1",
@@ -125,6 +143,20 @@ const I18N = {
     follow_symlinks_label: "Follow symlink directories:",
     start_scan_btn: "Start scanner",
     stop_scan_btn: "Stop scanner",
+    perf_settings_title: "Scanner Performance",
+    hash_mode_label: "Hash mode:",
+    hash_mode_auto: "Auto",
+    hash_mode_full: "Full MD5",
+    hash_mode_sample: "Sampled",
+    hash_threshold_label: "Sample threshold (MB):",
+    hash_chunk_label: "Sample chunk size (MB):",
+    ffprobe_timeout_label: "ffprobe timeout (sec):",
+    ffprobe_analyze_label: "ffprobe analyzeduration (us):",
+    ffprobe_probesize_label: "ffprobe probesize (bytes):",
+    save_settings_btn: "Save settings",
+    reset_settings_btn: "Reset defaults",
+    runtime_settings_saved: "Scanner settings saved.",
+    runtime_settings_reset: "Scanner settings reset to defaults.",
     tree_title: "Tree View",
     tree_search_placeholder: "Name search (*, ?)",
     tree_search_btn: "Search",
@@ -183,6 +215,8 @@ const I18N = {
     status_stale_na: "n/a",
     status_line:
       "status: {state} (desired: {desired}), mode: {mode}, worker: {worker} [stale={stale}], processed: {processed}, emitted: {emitted}, skipped: {skipped}",
+    status_current_file: "current file: {path}",
+    status_current_file_none: "current file: none",
     scan_state_idle: "idle",
     scan_state_running: "running",
     scan_state_stopped: "stopped",
@@ -198,6 +232,8 @@ const I18N = {
     err_search_failed: "Search failed: {message}",
     err_state_refresh_failed: "State refresh failed: {message}",
     err_ui_init_failed: "UI init failed: {message}",
+    err_settings_load_failed: "Failed to load settings: {message}",
+    err_settings_save_failed: "Failed to save settings: {message}",
   },
 };
 
@@ -350,6 +386,34 @@ function updateFilesTitle() {
     return;
   }
   titleNode.textContent = `${t("files_title")}: ${selectedDirContext.dirPath}`;
+}
+
+function setRuntimeSettingsStatus(text, isError = false) {
+  const node = $("runtime-settings-status");
+  if (!node) {
+    return;
+  }
+  node.textContent = text || "";
+  node.style.color = isError ? "#b42318" : "";
+}
+
+function setRuntimeSettingsControlsDisabled(disabled) {
+  const ids = [
+    "hash-mode-select",
+    "hash-threshold-input",
+    "hash-chunk-input",
+    "ffprobe-timeout-input",
+    "ffprobe-analyze-input",
+    "ffprobe-probesize-input",
+    "save-runtime-settings-btn",
+    "reset-runtime-settings-btn",
+  ];
+  ids.forEach((id) => {
+    const node = $(id);
+    if (node) {
+      node.disabled = Boolean(disabled);
+    }
+  });
 }
 
 async function api(path, options = {}) {
@@ -1118,6 +1182,48 @@ async function refreshRoots() {
   });
 }
 
+function applyRuntimeSettingsToForm(scanner) {
+  if (!scanner || typeof scanner !== "object") {
+    return;
+  }
+  if ($("hash-mode-select")) $("hash-mode-select").value = String(scanner.hash_mode || "auto");
+  if ($("hash-threshold-input")) $("hash-threshold-input").value = String(scanner.hash_sample_threshold_mb ?? 256);
+  if ($("hash-chunk-input")) $("hash-chunk-input").value = String(scanner.hash_sample_chunk_mb ?? 4);
+  if ($("ffprobe-timeout-input")) $("ffprobe-timeout-input").value = String(scanner.ffprobe_timeout_sec ?? 8);
+  if ($("ffprobe-analyze-input"))
+    $("ffprobe-analyze-input").value = String(scanner.ffprobe_analyze_duration_us ?? 2000000);
+  if ($("ffprobe-probesize-input"))
+    $("ffprobe-probesize-input").value = String(scanner.ffprobe_probesize_bytes ?? 5000000);
+}
+
+function collectRuntimeSettingsFromForm() {
+  return {
+    hash_mode: $("hash-mode-select").value,
+    hash_sample_threshold_mb: Number($("hash-threshold-input").value),
+    hash_sample_chunk_mb: Number($("hash-chunk-input").value),
+    ffprobe_timeout_sec: Number($("ffprobe-timeout-input").value),
+    ffprobe_analyze_duration_us: Number($("ffprobe-analyze-input").value),
+    ffprobe_probesize_bytes: Number($("ffprobe-probesize-input").value),
+  };
+}
+
+async function refreshRuntimeSettings() {
+  const data = await api("/api/settings");
+  applyRuntimeSettingsToForm(data.scanner || {});
+  setRuntimeSettingsStatus("");
+}
+
+async function saveRuntimeSettings({ resetDefaults = false } = {}) {
+  const payload = resetDefaults ? { reset_defaults: true } : collectRuntimeSettingsFromForm();
+  const data = await api("/api/settings", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  applyRuntimeSettingsToForm(data.scanner || {});
+  setRuntimeSettingsStatus(resetDefaults ? t("runtime_settings_reset") : t("runtime_settings_saved"));
+  await refreshState().catch(() => {});
+}
+
 async function openDirPicker(startPath = null) {
   $("dir-picker").classList.remove("hidden");
   await loadDirPicker(startPath);
@@ -1170,6 +1276,9 @@ async function refreshStatus() {
       emitted: status.emitted_records,
       skipped: status.skipped_files,
     });
+  $("scan-current-file").textContent = status.current_file
+    ? t("status_current_file", { path: status.current_file })
+    : t("status_current_file_none");
 
   const scanMode = $("scan-mode-select");
   const scanActive = status.state === "running" || status.desired_state === "running";
@@ -1195,6 +1304,7 @@ async function refreshStatus() {
   startBtn.disabled = !workerAlive;
   stopBtn.disabled = status.state !== "running" && status.desired_state !== "running";
   warning.classList.toggle("hidden", workerAlive);
+  setRuntimeSettingsControlsDisabled(scanActive);
 }
 
 async function refreshState() {
@@ -1322,6 +1432,20 @@ function bindActions() {
   };
 
   $("dups-refresh-btn").onclick = refreshDuplicates;
+  $("save-runtime-settings-btn").onclick = async () => {
+    try {
+      await saveRuntimeSettings({ resetDefaults: false });
+    } catch (err) {
+      setRuntimeSettingsStatus(t("err_settings_save_failed", { message: err.message }), true);
+    }
+  };
+  $("reset-runtime-settings-btn").onclick = async () => {
+    try {
+      await saveRuntimeSettings({ resetDefaults: true });
+    } catch (err) {
+      setRuntimeSettingsStatus(t("err_settings_save_failed", { message: err.message }), true);
+    }
+  };
   $("state-refresh-btn").onclick = async () => {
     try {
       await refreshState();
@@ -1404,6 +1528,9 @@ async function bootstrap() {
   bindActions();
   updateSortButtons();
   await refreshRoots();
+  await refreshRuntimeSettings().catch((err) => {
+    setRuntimeSettingsStatus(t("err_settings_load_failed", { message: err.message }), true);
+  });
   await refreshStatus();
   await refreshState();
   await refreshTree();

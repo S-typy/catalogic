@@ -23,6 +23,22 @@ body {
   opacity: 0.95;
 }
 
+.status-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.status-sub {
+  font-size: 12px;
+  opacity: 0.85;
+  max-width: min(70vw, 920px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .warning {
   margin: 0;
   padding: 10px 20px;
@@ -83,6 +99,11 @@ main {
 input {
   min-width: 280px;
   padding: 8px;
+}
+
+input[type="number"] {
+  min-width: 120px;
+  width: 140px;
 }
 
 input[type="checkbox"] {

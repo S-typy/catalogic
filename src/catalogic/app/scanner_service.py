@@ -10,6 +10,7 @@ import sys
 import time
 from typing import Any
 
+from catalogic.scanner.hash_util import describe_hash_policy
 from catalogic.storage import open_sqlite_storage
 
 
@@ -106,6 +107,11 @@ class ScannerService:
 
     def diagnostics(self) -> dict[str, object]:
         status = self.status()
+        storage = open_sqlite_storage(self._db_path, migrate=True)
+        try:
+            scanner_settings = storage.app_settings.get()
+        finally:
+            storage.close()
         process = self._read_process_metrics(
             pid=status.get("worker_pid"),
             host=status.get("worker_host"),
@@ -113,7 +119,8 @@ class ScannerService:
         return {
             "scan": status,
             "process": process,
-            "utilities": self._detect_utilities(),
+            "utilities": self._detect_utilities(scanner_settings),
+            "scanner_settings": scanner_settings,
             "metrics": {
                 "processed_files": int(status.get("processed_files") or 0),
                 "emitted_records": int(status.get("emitted_records") or 0),
@@ -152,7 +159,7 @@ class ScannerService:
         return max(0.0, end - float(started))
 
     @staticmethod
-    def _detect_utilities() -> dict[str, object]:
+    def _detect_utilities(scanner_settings: dict[str, Any] | None = None) -> dict[str, object]:
         def _has_module(name: str) -> bool:
             try:
                 __import__(name)
@@ -167,6 +174,7 @@ class ScannerService:
             "python_magic_available": _has_module("magic"),
             "pillow_available": _has_module("PIL"),
             "python_version": sys.version.split()[0],
+            **describe_hash_policy(scanner_settings),
         }
 
     def _read_process_metrics(self, *, pid: object, host: object) -> dict[str, object]:

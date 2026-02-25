@@ -1,39 +1,134 @@
 """Метаданные видео и аудио через ffprobe (ffmpeg)."""
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from catalogic.core.entities import AudioMetadata, VideoMetadata
 
 _FFPROBE = "ffprobe"
+DEFAULT_FFPROBE_TIMEOUT_SEC = 8.0
+DEFAULT_FFPROBE_ANALYZE_DURATION_US = 2_000_000
+DEFAULT_FFPROBE_PROBESIZE_BYTES = 5_000_000
 
 
 def _ffprobe_available() -> bool:
     return shutil.which(_FFPROBE) is not None
 
 
-def _run_ffprobe(path: Path) -> dict | None:
-    """Запускает ffprobe -show_format -show_streams -of json. При ошибке — None."""
+def _read_int_env(name: str, default: int, *, minimum: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+def _read_float_env(name: str, default: float, *, minimum: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value >= minimum else default
+
+
+def _to_int(raw: Any, *, default: int, minimum: int) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value >= minimum else default
+
+
+def _to_float(raw: Any, *, default: float, minimum: float) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value >= minimum else default
+
+
+def _ffprobe_timeout_sec(scanner_settings: dict[str, Any] | None = None) -> float:
+    if scanner_settings is not None and "ffprobe_timeout_sec" in scanner_settings:
+        return _to_float(
+            scanner_settings.get("ffprobe_timeout_sec"),
+            default=DEFAULT_FFPROBE_TIMEOUT_SEC,
+            minimum=1.0,
+        )
+    return _read_float_env(
+        "CATALOGIC_FFPROBE_TIMEOUT_SEC",
+        DEFAULT_FFPROBE_TIMEOUT_SEC,
+        minimum=1.0,
+    )
+
+
+def _ffprobe_analyze_duration_us(scanner_settings: dict[str, Any] | None = None) -> int:
+    if scanner_settings is not None and "ffprobe_analyze_duration_us" in scanner_settings:
+        return _to_int(
+            scanner_settings.get("ffprobe_analyze_duration_us"),
+            default=DEFAULT_FFPROBE_ANALYZE_DURATION_US,
+            minimum=0,
+        )
+    return _read_int_env(
+        "CATALOGIC_FFPROBE_ANALYZE_DURATION_US",
+        DEFAULT_FFPROBE_ANALYZE_DURATION_US,
+        minimum=0,
+    )
+
+
+def _ffprobe_probesize_bytes(scanner_settings: dict[str, Any] | None = None) -> int:
+    if scanner_settings is not None and "ffprobe_probesize_bytes" in scanner_settings:
+        return _to_int(
+            scanner_settings.get("ffprobe_probesize_bytes"),
+            default=DEFAULT_FFPROBE_PROBESIZE_BYTES,
+            minimum=32_768,
+        )
+    return _read_int_env(
+        "CATALOGIC_FFPROBE_PROBESIZE_BYTES",
+        DEFAULT_FFPROBE_PROBESIZE_BYTES,
+        minimum=32_768,
+    )
+
+
+def _run_ffprobe(path: Path, *, scanner_settings: dict[str, Any] | None = None) -> dict | None:
+    """Запускает облегчённый ffprobe. При ошибке — None."""
     if not path.is_file():
         return None
     if not _ffprobe_available():
         return None
+    timeout_sec = _ffprobe_timeout_sec(scanner_settings)
+    analyze_duration_us = _ffprobe_analyze_duration_us(scanner_settings)
+    probesize_bytes = _ffprobe_probesize_bytes(scanner_settings)
     try:
         r = subprocess.run(
             [
                 _FFPROBE,
                 "-v",
                 "quiet",
-                "-show_format",
-                "-show_streams",
+                "-probesize",
+                str(probesize_bytes),
+                "-analyzeduration",
+                str(analyze_duration_us),
+                "-show_entries",
+                (
+                    "format=duration,bit_rate:"
+                    "stream=codec_type,codec_name,width,height,bit_rate,r_frame_rate,channels,sample_rate"
+                ),
                 "-of",
                 "json",
                 str(path),
             ],
             capture_output=True,
-            timeout=30,
+            timeout=timeout_sec,
             check=False,
         )
         if r.returncode != 0:
@@ -59,10 +154,10 @@ def _parse_fps(r_frame_rate: str | None) -> float | None:
         return None
 
 
-def get_video_metadata(path: Path | str) -> VideoMetadata | None:
+def get_video_metadata(path: Path | str, *, scanner_settings: dict[str, Any] | None = None) -> VideoMetadata | None:
     """Извлекает метаданные видео (в т.ч. аудиодорожку) для отчёта General/Video/Audio."""
     path = Path(path)
-    data = _run_ffprobe(path)
+    data = _run_ffprobe(path, scanner_settings=scanner_settings)
     if not data:
         return None
 
@@ -145,10 +240,10 @@ def get_video_metadata(path: Path | str) -> VideoMetadata | None:
     )
 
 
-def get_audio_metadata(path: Path | str) -> AudioMetadata | None:
+def get_audio_metadata(path: Path | str, *, scanner_settings: dict[str, Any] | None = None) -> AudioMetadata | None:
     """Извлекает метаданные аудио для отчёта Audio."""
     path = Path(path)
-    data = _run_ffprobe(path)
+    data = _run_ffprobe(path, scanner_settings=scanner_settings)
     if not data:
         return None
 

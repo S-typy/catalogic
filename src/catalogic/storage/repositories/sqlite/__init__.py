@@ -394,6 +394,162 @@ class SQLiteFileRepository(FileRepository):
         return duplicates[:limit_groups]
 
 
+DEFAULT_APP_SETTINGS: dict[str, Any] = {
+    "hash_mode": "auto",
+    "hash_sample_threshold_mb": 256,
+    "hash_sample_chunk_mb": 4,
+    "ffprobe_timeout_sec": 8.0,
+    "ffprobe_analyze_duration_us": 2_000_000,
+    "ffprobe_probesize_bytes": 5_000_000,
+}
+
+
+def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed < minimum:
+        return default
+    if maximum is not None and parsed > maximum:
+        return default
+    return parsed
+
+
+def _clamp_float(value: Any, *, default: float, minimum: float, maximum: float | None = None) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed < minimum:
+        return default
+    if maximum is not None and parsed > maximum:
+        return default
+    return parsed
+
+
+def _normalize_hash_mode(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"full", "sample", "auto"}:
+        return raw
+    return str(DEFAULT_APP_SETTINGS["hash_mode"])
+
+
+def _normalize_app_settings(raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "hash_mode": _normalize_hash_mode(raw.get("hash_mode")),
+        "hash_sample_threshold_mb": _clamp_int(
+            raw.get("hash_sample_threshold_mb"),
+            default=int(DEFAULT_APP_SETTINGS["hash_sample_threshold_mb"]),
+            minimum=0,
+            maximum=1024 * 1024,
+        ),
+        "hash_sample_chunk_mb": _clamp_int(
+            raw.get("hash_sample_chunk_mb"),
+            default=int(DEFAULT_APP_SETTINGS["hash_sample_chunk_mb"]),
+            minimum=1,
+            maximum=1024,
+        ),
+        "ffprobe_timeout_sec": _clamp_float(
+            raw.get("ffprobe_timeout_sec"),
+            default=float(DEFAULT_APP_SETTINGS["ffprobe_timeout_sec"]),
+            minimum=1.0,
+            maximum=600.0,
+        ),
+        "ffprobe_analyze_duration_us": _clamp_int(
+            raw.get("ffprobe_analyze_duration_us"),
+            default=int(DEFAULT_APP_SETTINGS["ffprobe_analyze_duration_us"]),
+            minimum=0,
+            maximum=1_000_000_000,
+        ),
+        "ffprobe_probesize_bytes": _clamp_int(
+            raw.get("ffprobe_probesize_bytes"),
+            default=int(DEFAULT_APP_SETTINGS["ffprobe_probesize_bytes"]),
+            minimum=32_768,
+            maximum=1_000_000_000,
+        ),
+    }
+
+
+class SQLiteAppSettingsRepository:
+    """SQLite-репозиторий runtime-настроек сканера."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        self.ensure_row()
+
+    def ensure_row(self) -> None:
+        defaults = _normalize_app_settings(DEFAULT_APP_SETTINGS)
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO app_settings(
+                    id, hash_mode, hash_sample_threshold_mb, hash_sample_chunk_mb,
+                    ffprobe_timeout_sec, ffprobe_analyze_duration_us, ffprobe_probesize_bytes, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    1,
+                    defaults["hash_mode"],
+                    defaults["hash_sample_threshold_mb"],
+                    defaults["hash_sample_chunk_mb"],
+                    defaults["ffprobe_timeout_sec"],
+                    defaults["ffprobe_analyze_duration_us"],
+                    defaults["ffprobe_probesize_bytes"],
+                    time.time(),
+                ),
+            )
+
+    def get(self) -> dict[str, Any]:
+        row = self._conn.execute(
+            """
+            SELECT
+                hash_mode, hash_sample_threshold_mb, hash_sample_chunk_mb,
+                ffprobe_timeout_sec, ffprobe_analyze_duration_us, ffprobe_probesize_bytes
+            FROM app_settings
+            WHERE id = 1
+            """
+        ).fetchone()
+        if row is None:
+            self.ensure_row()
+            return self.get()
+        return _normalize_app_settings(dict(row))
+
+    def update(self, values: dict[str, Any]) -> dict[str, Any]:
+        merged = self.get()
+        merged.update(values)
+        normalized = _normalize_app_settings(merged)
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE app_settings
+                SET
+                    hash_mode = ?,
+                    hash_sample_threshold_mb = ?,
+                    hash_sample_chunk_mb = ?,
+                    ffprobe_timeout_sec = ?,
+                    ffprobe_analyze_duration_us = ?,
+                    ffprobe_probesize_bytes = ?,
+                    updated_at = ?
+                WHERE id = 1
+                """,
+                (
+                    normalized["hash_mode"],
+                    int(normalized["hash_sample_threshold_mb"]),
+                    int(normalized["hash_sample_chunk_mb"]),
+                    float(normalized["ffprobe_timeout_sec"]),
+                    int(normalized["ffprobe_analyze_duration_us"]),
+                    int(normalized["ffprobe_probesize_bytes"]),
+                    time.time(),
+                ),
+            )
+        return normalized
+
+    def reset_defaults(self) -> dict[str, Any]:
+        return self.update(DEFAULT_APP_SETTINGS)
+
+
 class SQLiteScanStateRepository:
     """SQLite-репозиторий состояния фонового сканера."""
 
@@ -407,13 +563,13 @@ class SQLiteScanStateRepository:
                 """
                 INSERT OR IGNORE INTO scan_state(
                     id, state, started_at, updated_at, finished_at,
-                    processed_files, emitted_records, skipped_files, current_root, message,
+                    processed_files, emitted_records, skipped_files, current_root, current_file, message,
                     desired_state, follow_symlinks, worker_last_seen, worker_pid, worker_host,
                     scan_mode, processed_image_files, processed_video_files,
                     processed_audio_files, processed_other_files, skipped_existing_files
                 )
                 VALUES (
-                    1, 'idle', NULL, ?, NULL, 0, 0, 0, NULL, NULL, 'idle', 0, NULL, NULL, NULL,
+                    1, 'idle', NULL, ?, NULL, 0, 0, 0, NULL, NULL, NULL, 'idle', 0, NULL, NULL, NULL,
                     'add_new', 0, 0, 0, 0, 0
                 )
                 """,
@@ -425,7 +581,7 @@ class SQLiteScanStateRepository:
             """
             SELECT
                 state, started_at, updated_at, finished_at,
-                processed_files, emitted_records, skipped_files, current_root, message,
+                processed_files, emitted_records, skipped_files, current_root, current_file, message,
                 desired_state, follow_symlinks, worker_last_seen, worker_pid, worker_host,
                 scan_mode, processed_image_files, processed_video_files,
                 processed_audio_files, processed_other_files, skipped_existing_files
@@ -445,6 +601,7 @@ class SQLiteScanStateRepository:
             "emitted_records": int(row["emitted_records"]),
             "skipped_files": int(row["skipped_files"]),
             "current_root": row["current_root"],
+            "current_file": row["current_file"],
             "message": row["message"],
             "desired_state": row["desired_state"],
             "follow_symlinks": bool(row["follow_symlinks"]),
@@ -515,6 +672,7 @@ class SQLiteScanStateRepository:
                     processed_other_files = 0,
                     skipped_existing_files = 0,
                     current_root = ?,
+                    current_file = NULL,
                     message = ?
                 WHERE id = 1
                 """,
@@ -533,6 +691,7 @@ class SQLiteScanStateRepository:
         processed_other_files: int,
         skipped_existing_files: int,
         current_root: str | None,
+        current_file: str | None = None,
     ) -> None:
         with self._conn:
             self._conn.execute(
@@ -548,7 +707,8 @@ class SQLiteScanStateRepository:
                     processed_audio_files = ?,
                     processed_other_files = ?,
                     skipped_existing_files = ?,
-                    current_root = ?
+                    current_root = ?,
+                    current_file = ?
                 WHERE id = 1
                 """,
                 (
@@ -562,7 +722,35 @@ class SQLiteScanStateRepository:
                     int(processed_other_files),
                     int(skipped_existing_files),
                     current_root,
+                    current_file,
                 ),
+            )
+
+    def set_current_file(
+        self,
+        *,
+        current_file: str | None,
+        current_root: str | None = None,
+    ) -> None:
+        if current_root is None:
+            with self._conn:
+                self._conn.execute(
+                    """
+                    UPDATE scan_state
+                    SET updated_at = ?, current_file = ?
+                    WHERE id = 1
+                    """,
+                    (time.time(), current_file),
+                )
+            return
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE scan_state
+                SET updated_at = ?, current_file = ?, current_root = ?
+                WHERE id = 1
+                """,
+                (time.time(), current_file, current_root),
             )
 
     def set_finished(
@@ -583,6 +771,7 @@ class SQLiteScanStateRepository:
                     desired_state = ?,
                     updated_at = ?,
                     finished_at = ?,
+                    current_file = NULL,
                     message = ?
                 WHERE id = 1
                 """,

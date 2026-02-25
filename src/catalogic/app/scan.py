@@ -1,7 +1,7 @@
 """Use case: запуск скана, сохранение записей."""
 
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from catalogic.core.entities import FileRecord
 from catalogic.scanner import ScanStats, scan_with_stats
@@ -9,6 +9,7 @@ from catalogic.scanner import ScanStats, scan_with_stats
 RecordSink = Callable[[FileRecord], None]
 StopPredicate = Callable[[], bool]
 ProgressCallback = Callable[[ScanStats], None]
+FileStartCallback = Callable[[Path], None]
 
 
 def run_scan(
@@ -18,6 +19,8 @@ def run_scan(
     sink: RecordSink | None = None,
     should_stop: StopPredicate | None = None,
     on_progress: ProgressCallback | None = None,
+    on_file_start: FileStartCallback | None = None,
+    scanner_settings: dict[str, Any] | None = None,
 ) -> ScanStats:
     """
     Выполняет полный проход сканера.
@@ -31,4 +34,6 @@ def run_scan(
         on_record=sink,
         should_stop=should_stop,
         on_progress=on_progress,
+        on_file_start=on_file_start,
+        scanner_settings=scanner_settings,
     )

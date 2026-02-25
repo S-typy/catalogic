@@ -116,3 +116,50 @@ def test_sqlite_get_file_by_root_and_path(tmp_path: Path) -> None:
         assert missing is None
     finally:
         storage.close()
+
+
+def test_scan_state_stores_current_file(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalogic.db"
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        storage.scan_state.set_running(current_root="/mnt", message="run")
+        storage.scan_state.set_current_file(current_file="/mnt/video/big.mkv", current_root="/mnt")
+        state = storage.scan_state.get()
+        assert state["current_file"] == "/mnt/video/big.mkv"
+        assert state["current_root"] == "/mnt"
+
+        storage.scan_state.set_finished(state="idle", desired_state="idle", message="done")
+        state = storage.scan_state.get()
+        assert state["current_file"] is None
+    finally:
+        storage.close()
+
+
+def test_app_settings_update_and_reset(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalogic.db"
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        initial = storage.app_settings.get()
+        assert initial["hash_mode"] in {"auto", "full", "sample"}
+
+        saved = storage.app_settings.update(
+            {
+                "hash_mode": "sample",
+                "hash_sample_threshold_mb": 64,
+                "hash_sample_chunk_mb": 8,
+                "ffprobe_timeout_sec": 4.5,
+                "ffprobe_analyze_duration_us": 500_000,
+                "ffprobe_probesize_bytes": 1_000_000,
+            }
+        )
+        assert saved["hash_mode"] == "sample"
+        assert int(saved["hash_sample_threshold_mb"]) == 64
+        assert int(saved["hash_sample_chunk_mb"]) == 8
+        assert float(saved["ffprobe_timeout_sec"]) == 4.5
+
+        reset = storage.app_settings.reset_defaults()
+        assert reset["hash_mode"] == "auto"
+        assert int(reset["hash_sample_threshold_mb"]) == 256
+        assert int(reset["hash_sample_chunk_mb"]) == 4
+    finally:
+        storage.close()

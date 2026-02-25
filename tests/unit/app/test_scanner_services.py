@@ -85,7 +85,17 @@ def test_worker_heartbeat_touched_during_progress(tmp_path: Path, monkeypatch) -
         skipped_files = 0
         interrupted = False
 
-    def _fake_run_scan(root, *, follow_symlinks=False, sink=None, should_stop=None, on_progress=None):  # type: ignore[no-untyped-def]
+    def _fake_run_scan(  # type: ignore[no-untyped-def]
+        root,
+        *,
+        follow_symlinks=False,
+        sink=None,
+        should_stop=None,
+        on_progress=None,
+        on_file_start=None,
+    ):
+        if on_file_start is not None:
+            on_file_start(Path(root) / "a.txt")
         if on_progress is not None:
             on_progress(_Stats())
         return _Stats()

@@ -31,6 +31,16 @@ class ScanStartRequest(BaseModel):
     scan_mode: Literal["rebuild", "add_new"] = "add_new"
 
 
+class ScannerSettingsRequest(BaseModel):
+    hash_mode: Literal["auto", "full", "sample"] | None = None
+    hash_sample_threshold_mb: int | None = Field(default=None, ge=0)
+    hash_sample_chunk_mb: int | None = Field(default=None, ge=1)
+    ffprobe_timeout_sec: float | None = Field(default=None, ge=1.0)
+    ffprobe_analyze_duration_us: int | None = Field(default=None, ge=0)
+    ffprobe_probesize_bytes: int | None = Field(default=None, ge=32768)
+    reset_defaults: bool = False
+
+
 def create_api_router() -> APIRouter:
     router = APIRouter(prefix="/api")
 
@@ -211,10 +221,36 @@ def create_api_router() -> APIRouter:
 
     @router.get("/settings")
     def get_settings(request: Request) -> dict[str, Any]:
+        from catalogic.storage import open_sqlite_storage
+
+        storage = open_sqlite_storage(request.app.state.db_path, migrate=True)
+        try:
+            scanner_settings = storage.app_settings.get()
+        finally:
+            storage.close()
         return {
             "db_path": request.app.state.db_path,
             "frontend_url": f"http://{request.url.hostname}:{request.app.state.frontend_port}",
+            "browse_root": str(request.app.state.browse_root),
+            "scanner": scanner_settings,
         }
+
+    @router.post("/settings")
+    def post_settings(body: ScannerSettingsRequest, request: Request) -> dict[str, Any]:
+        from catalogic.storage import open_sqlite_storage
+
+        payload = body.model_dump()
+        reset_defaults = bool(payload.pop("reset_defaults", False))
+        values = {key: value for key, value in payload.items() if value is not None}
+        storage = open_sqlite_storage(request.app.state.db_path, migrate=True)
+        try:
+            if reset_defaults:
+                scanner_settings = storage.app_settings.reset_defaults()
+            else:
+                scanner_settings = storage.app_settings.update(values)
+        finally:
+            storage.close()
+        return {"saved": True, "scanner": scanner_settings}
 
     @router.get("/state")
     def get_state(request: Request) -> dict[str, Any]:

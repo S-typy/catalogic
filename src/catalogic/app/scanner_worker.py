@@ -49,6 +49,7 @@ class ScannerWorker:
             scan_mode = str(status.get("scan_mode") or "add_new")
             if scan_mode not in {"rebuild", "add_new"}:
                 scan_mode = "add_new"
+            scanner_settings = storage.app_settings.get()
             if scan_mode == "rebuild":
                 storage.files.delete_all()
 
@@ -66,6 +67,7 @@ class ScannerWorker:
                 root_id = int(root.id)
                 last_check_at = 0.0
                 should_stop_cached = False
+                current_file_path: str | None = None
 
                 def _sink(record) -> None:
                     nonlocal total_image, total_video, total_audio, total_other
@@ -102,7 +104,14 @@ class ScannerWorker:
                         processed_other_files=total_other,
                         skipped_existing_files=total_skipped_existing,
                         current_root=root.path,
+                        current_file=current_file_path,
                     )
+
+                def _on_file_start(path: str) -> None:
+                    nonlocal current_file_path
+                    current_file_path = path
+                    storage.scan_state.touch_worker_heartbeat(pid=self._pid, host=self._host)
+                    storage.scan_state.set_current_file(current_file=path, current_root=root.path)
 
                 def _counter(kind: str) -> None:
                     nonlocal total_image, total_video, total_audio, total_other, total_skipped_existing
@@ -126,6 +135,8 @@ class ScannerWorker:
                         should_stop=_should_stop,
                         on_progress=_progress,
                         on_counter=_counter,
+                        on_file_start=_on_file_start,
+                        scanner_settings=scanner_settings,
                     )
                 else:
                     stats = run_scan(
@@ -134,6 +145,8 @@ class ScannerWorker:
                         sink=_sink,
                         should_stop=_should_stop,
                         on_progress=_progress,
+                        on_file_start=lambda p: _on_file_start(str(p)),
+                        scanner_settings=scanner_settings,
                     )
                 total_processed += stats.files_discovered
                 total_emitted += stats.records_emitted
@@ -149,6 +162,7 @@ class ScannerWorker:
                     processed_other_files=total_other,
                     skipped_existing_files=total_skipped_existing,
                     current_root=root.path,
+                    current_file=current_file_path,
                 )
                 if stats.interrupted:
                     storage.scan_state.set_finished(
@@ -211,10 +225,14 @@ class ScannerWorker:
         should_stop: Callable[[], bool],
         on_progress: Callable[[ScanStats], None] | None,
         on_counter: Callable[[str], None],
+        on_file_start: Callable[[str], None] | None,
+        scanner_settings: dict[str, Any] | None,
     ) -> ScanStats:
         stats = ScanStats(root=str(Path(root_path).resolve()))
 
         for path in iterate_files(root_path, follow_symlinks=follow_symlinks):
+            if on_file_start is not None:
+                on_file_start(str(path))
             if should_stop():
                 stats.interrupted = True
                 break
@@ -257,9 +275,10 @@ class ScannerWorker:
                 cached_size=cached_size,
                 cached_mtime=cached_mtime,
                 cached_md5=cached_md5,
+                scanner_settings=scanner_settings,
             )
             if record is None:
-                record = get_file_record(path)
+                record = get_file_record(path, scanner_settings=scanner_settings)
             if record is None:
                 stats.skipped_files += 1
                 if on_progress is not None:

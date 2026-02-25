@@ -9,7 +9,10 @@
 <body>
   <header class="header">
     <h1 data-i18n="app_title">Catalogic STEP1</h1>
-    <div id="scan-status" class="status">status: unknown</div>
+    <div class="status-wrap">
+      <div id="scan-status" class="status">status: unknown</div>
+      <div id="scan-current-file" class="status-sub">current file: none</div>
+    </div>
   </header>
   <div id="worker-warning" class="warning hidden" data-i18n="worker_warning">
     Scanner worker offline. Запустите сервис `catalogic-scanner`.
@@ -60,6 +63,34 @@
       <div class="row">
         <button id="start-scan-btn" disabled data-i18n="start_scan_btn">Старт сканера</button>
         <button id="stop-scan-btn" disabled data-i18n="stop_scan_btn">Стоп сканера</button>
+      </div>
+      <div class="box">
+        <h3 data-i18n="perf_settings_title">Производительность сканера</h3>
+        <div class="row">
+          <label for="hash-mode-select" data-i18n="hash_mode_label">Режим хэша:</label>
+          <select id="hash-mode-select">
+            <option value="auto" data-i18n="hash_mode_auto">Авто</option>
+            <option value="full" data-i18n="hash_mode_full">Полный MD5</option>
+            <option value="sample" data-i18n="hash_mode_sample">Сэмплированный</option>
+          </select>
+          <label for="hash-threshold-input" data-i18n="hash_threshold_label">Порог sample (MB):</label>
+          <input id="hash-threshold-input" type="number" min="0" step="1">
+          <label for="hash-chunk-input" data-i18n="hash_chunk_label">Размер sample блока (MB):</label>
+          <input id="hash-chunk-input" type="number" min="1" step="1">
+        </div>
+        <div class="row">
+          <label for="ffprobe-timeout-input" data-i18n="ffprobe_timeout_label">ffprobe timeout (sec):</label>
+          <input id="ffprobe-timeout-input" type="number" min="1" step="0.5">
+          <label for="ffprobe-analyze-input" data-i18n="ffprobe_analyze_label">ffprobe analyzeduration (us):</label>
+          <input id="ffprobe-analyze-input" type="number" min="0" step="1000">
+          <label for="ffprobe-probesize-input" data-i18n="ffprobe_probesize_label">ffprobe probesize (bytes):</label>
+          <input id="ffprobe-probesize-input" type="number" min="32768" step="1024">
+        </div>
+        <div class="row">
+          <button id="save-runtime-settings-btn" data-i18n="save_settings_btn">Сохранить настройки</button>
+          <button id="reset-runtime-settings-btn" data-i18n="reset_settings_btn">Сбросить по умолчанию</button>
+          <span id="runtime-settings-status" class="selection-info"></span>
+        </div>
       </div>
       <ul id="roots-list" class="list"></ul>
     </section>

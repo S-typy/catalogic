@@ -8,6 +8,7 @@ from pathlib import Path
 
 from catalogic.storage.migrations import apply_sqlite_migrations
 from catalogic.storage.repositories.sqlite import (
+    SQLiteAppSettingsRepository,
     SQLiteFileRepository,
     SQLiteScanRootRepository,
     SQLiteScanStateRepository,
@@ -21,6 +22,7 @@ class SQLiteStorage:
     conn: sqlite3.Connection
     scan_roots: SQLiteScanRootRepository
     files: SQLiteFileRepository
+    app_settings: SQLiteAppSettingsRepository
     scan_state: SQLiteScanStateRepository
 
     def close(self) -> None:
@@ -58,6 +60,7 @@ def open_sqlite_storage(
             conn=conn,
             scan_roots=SQLiteScanRootRepository(conn),
             files=SQLiteFileRepository(conn),
+            app_settings=SQLiteAppSettingsRepository(conn),
             scan_state=SQLiteScanStateRepository(conn),
         )
     except Exception:
