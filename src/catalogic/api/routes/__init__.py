@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from dataclasses import asdict
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -85,8 +86,28 @@ def create_api_router() -> APIRouter:
 
         if not file_path.is_file():
             raise HTTPException(status_code=404, detail="File does not exist on disk")
+        if not os.access(file_path, os.R_OK):
+            raise HTTPException(status_code=403, detail="File is not readable by backend service user")
 
         return file_path, str(record.mime or "")
+
+    def _is_likely_video(path: Path, mime: str) -> bool:
+        if mime.lower().startswith("video/"):
+            return True
+        return path.suffix.lower() in {
+            ".mp4",
+            ".mkv",
+            ".avi",
+            ".mov",
+            ".wmv",
+            ".flv",
+            ".webm",
+            ".m4v",
+            ".ts",
+            ".m2ts",
+            ".mpeg",
+            ".mpg",
+        }
 
     @router.get("/health")
     def health() -> dict[str, str]:
@@ -278,7 +299,7 @@ def create_api_router() -> APIRouter:
         audio_bitrate_kbps: int = Query(default=96, ge=48, le=256),
     ) -> StreamingResponse:
         file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
-        if not mime.lower().startswith("video/"):
+        if not _is_likely_video(file_path, mime):
             raise HTTPException(status_code=415, detail="Video preview is supported only for video files")
 
         ffmpeg = shutil.which("ffmpeg")
@@ -368,6 +389,20 @@ def create_api_router() -> APIRouter:
             media_type="video/mp4",
             headers={"Cache-Control": "no-store"},
         )
+
+    @router.get("/file/preview/video/check")
+    def check_file_video_preview(
+        request: Request,
+        root_id: int = Query(ge=1),
+        path: str = Query(min_length=1),
+    ) -> dict[str, Any]:
+        file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
+        if not _is_likely_video(file_path, mime):
+            raise HTTPException(status_code=415, detail="Video preview is supported only for video files")
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise HTTPException(status_code=503, detail="ffmpeg is not available")
+        return {"ok": True, "ffmpeg": ffmpeg}
 
     @router.get("/search")
     def get_search(

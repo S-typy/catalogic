@@ -454,6 +454,33 @@ function buildApiUrl(path, query = {}) {
   return `${API_BASE}${path}${qs ? `?${qs}` : ""}`;
 }
 
+function extractApiErrorMessage(raw) {
+  const text = String(raw || "").trim();
+  if (!text) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+        return parsed.detail.trim();
+      }
+      if (Array.isArray(parsed.detail) && parsed.detail.length) {
+        const first = parsed.detail[0];
+        if (typeof first === "string") {
+          return first;
+        }
+        if (first && typeof first === "object" && typeof first.msg === "string") {
+          return first.msg;
+        }
+      }
+    }
+  } catch (_) {
+    // keep raw text fallback
+  }
+  return text;
+}
+
 function switchTab(tabId) {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.tab === tabId);
@@ -761,25 +788,39 @@ function createFilePreviewNode(details) {
   container.className = "file-preview-container";
 
   if (mime.startsWith("image/")) {
-    const img = document.createElement("img");
-    img.className = "file-preview-image";
-    img.alt = details.name || details.path || "preview";
-    img.loading = "lazy";
-    img.src = buildApiUrl("/api/file/preview/image", {
+    const note = document.createElement("div");
+    note.className = "file-preview-note";
+    note.textContent = t("file_preview_loading");
+    container.appendChild(note);
+
+    const previewUrl = buildApiUrl("/api/file/preview/image", {
       root_id: details.root_id,
       path: details.path,
       width: 420,
       height: 280,
       quality: 45,
     });
-    img.onerror = () => {
-      container.innerHTML = "";
-      const error = document.createElement("div");
-      error.className = "file-preview-note file-preview-error";
-      error.textContent = t("file_preview_failed");
-      container.appendChild(error);
-    };
-    container.appendChild(img);
+    fetch(previewUrl)
+      .then(async (response) => {
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(extractApiErrorMessage(text) || `HTTP ${response.status}`);
+        }
+        return response.blob();
+      })
+      .then((blob) => {
+        container.innerHTML = "";
+        const img = document.createElement("img");
+        img.className = "file-preview-image";
+        img.alt = details.name || details.path || "preview";
+        img.loading = "lazy";
+        img.src = URL.createObjectURL(blob);
+        container.appendChild(img);
+      })
+      .catch((err) => {
+        note.textContent = `${t("file_preview_failed")} ${extractApiErrorMessage(err.message)}`.trim();
+        note.classList.add("file-preview-error");
+      });
     return container;
   }
 
@@ -841,7 +882,24 @@ function createFilePreviewNode(details) {
       note.classList.add("file-preview-error");
     });
 
-    video.src = buildVideoUrl(0);
+    const checkUrl = buildApiUrl("/api/file/preview/video/check", {
+      root_id: details.root_id,
+      path: details.path,
+    });
+    fetch(checkUrl)
+      .then(async (response) => {
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(extractApiErrorMessage(text) || `HTTP ${response.status}`);
+        }
+      })
+      .then(() => {
+        video.src = buildVideoUrl(0);
+      })
+      .catch((err) => {
+        note.textContent = `${t("file_preview_failed")} ${extractApiErrorMessage(err.message)}`.trim();
+        note.classList.add("file-preview-error");
+      });
 
     container.appendChild(video);
     container.appendChild(note);
