@@ -49,6 +49,7 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
 
     r = client.post("/api/scan/start", json={})
     assert r.status_code == 200
+    assert r.json()["scan_mode"] == "add_new"
     assert worker.run_pending_once() is True
 
     status = _wait_scan_complete(client)
@@ -98,6 +99,13 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
     groups = dups.json()["groups"]
     assert groups
     assert groups[0]["name"] == "dup.txt"
+
+    state = client.get("/api/state")
+    assert state.status_code == 200
+    payload = state.json()
+    assert "scan" in payload
+    assert "metrics" in payload
+    assert "utilities" in payload
 
 
 def test_api_fs_list_dirs(tmp_path: Path) -> None:

@@ -85,6 +85,17 @@ input {
   padding: 8px;
 }
 
+input[type="checkbox"] {
+  min-width: auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+select {
+  padding: 8px;
+}
+
 button {
   padding: 8px 12px;
 }
@@ -151,8 +162,14 @@ button {
 
 .browser-layout {
   --left-pane-width: 420px;
+  --details-pane-width: 400px;
   display: grid;
-  grid-template-columns: minmax(220px, var(--left-pane-width)) 12px minmax(320px, 1fr);
+  grid-template-columns:
+    minmax(220px, var(--left-pane-width))
+    12px
+    minmax(320px, 1fr)
+    12px
+    minmax(280px, var(--details-pane-width));
   gap: 0;
   margin-bottom: 10px;
   height: clamp(320px, calc(100vh - 320px), 720px);
@@ -179,18 +196,31 @@ button {
   padding-right: 8px;
 }
 
-.browser-pane-right {
+.browser-pane-middle {
   grid-column: 3;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.browser-pane-details {
+  grid-column: 5;
   padding-left: 8px;
 }
 
 .pane-resizer {
-  grid-column: 2;
   cursor: col-resize;
   touch-action: none;
   border-radius: 8px;
   background: linear-gradient(180deg, #e5e8ee, #cdd5df);
   border: 1px solid #bcccdc;
+}
+
+#pane-resizer-left {
+  grid-column: 2;
+}
+
+#pane-resizer-right {
+  grid-column: 4;
 }
 
 .pane-resizer:hover {
@@ -246,8 +276,8 @@ button {
 }
 
 .file-details-box {
-  min-height: 240px;
-  max-height: 340px;
+  min-height: 0;
+  height: 100%;
 }
 
 .file-details-grid {
@@ -288,6 +318,20 @@ button {
   overflow-wrap: anywhere;
 }
 
+.state-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.state-grid pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
 @media (max-width: 900px) {
   .browser-layout {
     grid-template-columns: 1fr;
@@ -296,13 +340,15 @@ button {
   }
 
   .browser-pane-left,
-  .browser-pane-right {
+  .browser-pane-middle,
+  .browser-pane-details {
     grid-column: 1;
     padding-left: 0;
     padding-right: 0;
   }
 
-  .pane-resizer {
+  #pane-resizer-left,
+  #pane-resizer-right {
     display: none;
   }
 
@@ -314,5 +360,9 @@ button {
   .file-details-grid {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  .state-grid {
+    grid-template-columns: 1fr;
   }
 }

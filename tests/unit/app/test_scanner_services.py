@@ -96,3 +96,68 @@ def test_worker_heartbeat_touched_during_progress(tmp_path: Path, monkeypatch) -
     assert worker.run_pending_once() is True
     # Один touch в начале run_pending_once + минимум один из _progress.
     assert calls["count"] >= 2
+
+
+def test_add_new_mode_skips_unchanged_files(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    file_path = data_root / "a.txt"
+    file_path.write_text("aa")
+
+    db_path = tmp_path / "catalogic.db"
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        storage.scan_roots.get_or_create(str(data_root))
+    finally:
+        storage.close()
+
+    service = ScannerService(str(db_path))
+    worker = ScannerWorker(str(db_path))
+
+    assert service.start([str(data_root)], scan_mode="add_new").started is True
+    assert worker.run_pending_once() is True
+    first = service.status()
+    assert int(first["emitted_records"]) >= 1
+
+    assert service.start([str(data_root)], scan_mode="add_new").started is True
+    assert worker.run_pending_once() is True
+    second = service.status()
+    assert int(second["emitted_records"]) == 0
+    assert int(second["skipped_existing_files"]) >= 1
+
+
+def test_rebuild_mode_recreates_catalog_snapshot(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    first_file = data_root / "old.txt"
+    first_file.write_text("old")
+
+    db_path = tmp_path / "catalogic.db"
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        root = storage.scan_roots.get_or_create(str(data_root))
+        assert root.id is not None
+    finally:
+        storage.close()
+
+    service = ScannerService(str(db_path))
+    worker = ScannerWorker(str(db_path))
+
+    assert service.start([str(data_root)], scan_mode="add_new").started is True
+    assert worker.run_pending_once() is True
+
+    first_file.unlink()
+    (data_root / "new.txt").write_text("new")
+
+    assert service.start([str(data_root)], scan_mode="rebuild").started is True
+    assert worker.run_pending_once() is True
+
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        old_hits = storage.files.search_by_name("old.txt")
+        new_hits = storage.files.search_by_name("new.txt")
+    finally:
+        storage.close()
+
+    assert old_hits == []
+    assert len(new_hits) == 1

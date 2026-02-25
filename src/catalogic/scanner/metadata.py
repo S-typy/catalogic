@@ -52,7 +52,7 @@ def get_file_record(path: Path | str) -> FileRecord | None:
     size, mtime, ctime, is_symlink = raw
 
     mime = get_mime(path)
-    md5 = compute_md5(path)
+    md5 = compute_md5(path, size_hint=size)
 
     video_meta = None
     audio_meta = None
@@ -68,6 +68,57 @@ def get_file_record(path: Path | str) -> FileRecord | None:
 
     return FileRecord(
         path=str(path),
+        size=size,
+        mtime=mtime,
+        ctime=ctime,
+        mime=mime,
+        is_symlink=is_symlink,
+        md5=md5,
+        video_meta=video_meta,
+        audio_meta=audio_meta,
+        image_meta=image_meta,
+    )
+
+
+def get_file_record_with_cached_md5(
+    path: Path | str,
+    *,
+    cached_size: int | None,
+    cached_mtime: float | None,
+    cached_md5: str | None,
+) -> FileRecord | None:
+    """
+    Как get_file_record, но переиспользует ранее вычисленный MD5, если файл не изменился.
+    """
+    path_obj = _normalize_path(path)
+    if not path_obj.is_file():
+        return None
+
+    raw = _get_stat_metadata(path_obj)
+    if raw is None:
+        return None
+    size, mtime, ctime, is_symlink = raw
+
+    mime = get_mime(path_obj)
+    if cached_md5 and cached_size == size and cached_mtime == mtime:
+        md5 = cached_md5
+    else:
+        md5 = compute_md5(path_obj, size_hint=size)
+
+    video_meta = None
+    audio_meta = None
+    image_meta = None
+
+    if mime:
+        if mime.startswith(VIDEO_MIME_PREFIXES):
+            video_meta = get_video_metadata(path_obj)
+        elif mime.startswith(AUDIO_MIME_PREFIXES):
+            audio_meta = get_audio_metadata(path_obj)
+        elif mime.startswith(IMAGE_MIME_PREFIXES):
+            image_meta = get_image_metadata(path_obj)
+
+    return FileRecord(
+        path=str(path_obj),
         size=size,
         mtime=mtime,
         ctime=ctime,

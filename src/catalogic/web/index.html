@@ -3,64 +3,81 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Catalogic STEP1</title>
+  <title data-i18n="app_title">Catalogic STEP1</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <header class="header">
-    <h1>Catalogic STEP1</h1>
+    <h1 data-i18n="app_title">Catalogic STEP1</h1>
     <div id="scan-status" class="status">status: unknown</div>
   </header>
-  <div id="worker-warning" class="warning hidden">
+  <div id="worker-warning" class="warning hidden" data-i18n="worker_warning">
     Scanner worker offline. Запустите сервис `catalogic-scanner`.
   </div>
 
   <nav class="tabs">
-    <button class="tab active" data-tab="settings">Настройки</button>
-    <button class="tab" data-tab="tree">Просмотр дерева</button>
-    <button class="tab" data-tab="dups">Поиск дубликатов</button>
+    <button class="tab active" data-tab="settings" data-i18n="tab_settings">Настройки</button>
+    <button class="tab" data-tab="tree" data-i18n="tab_tree">Просмотр дерева</button>
+    <button class="tab" data-tab="state" data-i18n="tab_state">Состояние</button>
+    <button class="tab" data-tab="dups" data-i18n="tab_duplicates">Поиск дубликатов</button>
   </nav>
 
   <main>
     <section id="tab-settings" class="panel active">
-      <h2>Настройки</h2>
+      <h2 data-i18n="settings_title">Настройки</h2>
       <div class="row">
-        <input id="root-input" type="text" placeholder="/mnt/storage/media">
-        <button id="open-picker-btn">Выбрать каталог</button>
-        <button id="add-root-btn">Добавить путь</button>
+        <label for="language-select" data-i18n="settings_language_label">Язык интерфейса:</label>
+        <select id="language-select">
+          <option value="ru" data-i18n="language_ru">Русский</option>
+          <option value="en" data-i18n="language_en">English</option>
+        </select>
+      </div>
+      <div class="row">
+        <input id="root-input" type="text" placeholder="/mnt/storage/media" data-i18n-placeholder="root_input_placeholder">
+        <button id="open-picker-btn" data-i18n="open_picker_btn">Выбрать каталог</button>
+        <button id="add-root-btn" data-i18n="add_root_btn">Добавить путь</button>
       </div>
       <div id="dir-picker" class="box hidden">
         <div class="row">
           <strong id="picker-current-path">/</strong>
         </div>
         <div class="row">
-          <button id="picker-up-btn">Вверх</button>
-          <button id="picker-select-btn">Выбрать текущий</button>
-          <button id="picker-close-btn">Закрыть</button>
+          <button id="picker-up-btn" data-i18n="picker_up_btn">Вверх</button>
+          <button id="picker-select-btn" data-i18n="picker_select_btn">Выбрать текущий</button>
+          <button id="picker-close-btn" data-i18n="picker_close_btn">Закрыть</button>
         </div>
         <ul id="picker-list" class="list"></ul>
       </div>
       <div class="row">
-        <button id="start-scan-btn" disabled>Старт сканера</button>
-        <button id="stop-scan-btn" disabled>Стоп сканера</button>
+        <label for="scan-mode-select" data-i18n="scan_mode_label">Режим сканирования:</label>
+        <select id="scan-mode-select">
+          <option value="add_new" data-i18n="scan_mode_add_new">Добавление новых</option>
+          <option value="rebuild" data-i18n="scan_mode_rebuild">Пересоздание базы</option>
+        </select>
+        <label for="follow-symlinks-input" data-i18n="follow_symlinks_label">Следовать symlink-директориям:</label>
+        <input id="follow-symlinks-input" type="checkbox">
+      </div>
+      <div class="row">
+        <button id="start-scan-btn" disabled data-i18n="start_scan_btn">Старт сканера</button>
+        <button id="stop-scan-btn" disabled data-i18n="stop_scan_btn">Стоп сканера</button>
       </div>
       <ul id="roots-list" class="list"></ul>
     </section>
 
     <section id="tab-tree" class="panel">
-      <h2>Просмотр дерева</h2>
+      <h2 data-i18n="tree_title">Просмотр дерева</h2>
       <div class="row">
-        <input id="tree-search-input" type="text" placeholder="Поиск по имени (*, ?)">
-        <button id="tree-search-btn">Искать</button>
-        <button id="tree-refresh-btn">Обновить дерево</button>
+        <input id="tree-search-input" type="text" placeholder="Поиск по имени (*, ?)" data-i18n-placeholder="tree_search_placeholder">
+        <button id="tree-search-btn" data-i18n="tree_search_btn">Искать</button>
+        <button id="tree-refresh-btn" data-i18n="tree_refresh_btn">Обновить дерево</button>
       </div>
       <div id="browser-layout" class="browser-layout">
         <div class="browser-pane browser-pane-left">
-          <h3>Каталоги</h3>
+          <h3 data-i18n="tree_dirs_title">Каталоги</h3>
           <div id="tree-result" class="box tree-box"></div>
         </div>
-        <div id="pane-resizer" class="pane-resizer" title="Изменить размер панелей"></div>
-        <div class="browser-pane browser-pane-right">
+        <div id="pane-resizer-left" class="pane-resizer" title="Изменить размер панелей" data-i18n-title="pane_resize_title"></div>
+        <div class="browser-pane browser-pane-middle">
           <h3 id="files-title">Файлы</h3>
           <div class="box files-box">
             <table class="files-table">
@@ -73,24 +90,52 @@
               </thead>
               <tbody id="files-table-body">
                 <tr>
-                  <td colspan="3">Выберите каталог слева.</td>
+                  <td colspan="3" data-i18n="files_select_dir_left">Выберите каталог слева.</td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <div id="files-selection-info" class="selection-info">Выберите файл для действий.</div>
+          <div id="files-selection-info" class="selection-info" data-i18n="files_selection_default">Выберите файл для действий.</div>
         </div>
-      </div>
-      <h3>Детали файла</h3>
-      <div id="file-details-panel" class="box file-details-box">
-        Выберите файл в таблице, чтобы посмотреть полную информацию.
+        <div id="pane-resizer-right" class="pane-resizer" title="Изменить размер панелей" data-i18n-title="pane_resize_title"></div>
+        <div class="browser-pane browser-pane-details">
+          <h3 data-i18n="file_details_title">Детали файла</h3>
+          <div id="file-details-panel" class="box file-details-box" data-i18n="file_details_placeholder">
+            Выберите файл в таблице, чтобы посмотреть полную информацию.
+          </div>
+        </div>
       </div>
       <div id="tree-search-result" class="box tree-search-box"></div>
     </section>
 
+    <section id="tab-state" class="panel">
+      <h2 data-i18n="state_title">Состояние</h2>
+      <div class="row">
+        <button id="state-refresh-btn" data-i18n="state_refresh_btn">Обновить</button>
+      </div>
+      <div class="state-grid">
+        <div class="box">
+          <h3 data-i18n="state_scan">Сканер</h3>
+          <pre id="state-scan"></pre>
+        </div>
+        <div class="box">
+          <h3 data-i18n="state_worker_process">Процесс worker</h3>
+          <pre id="state-process"></pre>
+        </div>
+        <div class="box">
+          <h3 data-i18n="state_metrics">Метрики</h3>
+          <pre id="state-metrics"></pre>
+        </div>
+        <div class="box">
+          <h3 data-i18n="state_utilities">Утилиты</h3>
+          <pre id="state-utils"></pre>
+        </div>
+      </div>
+    </section>
+
     <section id="tab-dups" class="panel">
-      <h2>Поиск дубликатов (имя + размер)</h2>
-      <button id="dups-refresh-btn">Обновить</button>
+      <h2 data-i18n="dups_title">Поиск дубликатов (имя + размер)</h2>
+      <button id="dups-refresh-btn" data-i18n="dups_refresh_btn">Обновить</button>
       <pre id="dups-result" class="box"></pre>
     </section>
   </main>

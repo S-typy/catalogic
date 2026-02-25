@@ -256,6 +256,36 @@ class SQLiteFileRepository(FileRepository):
             return None
         return _row_to_file_record(row)
 
+    def get_scan_entry(self, *, root_id: int, path: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT
+                size, mtime, mime, md5,
+                video_meta_json IS NOT NULL AS has_video_meta,
+                audio_meta_json IS NOT NULL AS has_audio_meta,
+                image_meta_json IS NOT NULL AS has_image_meta
+            FROM files
+            WHERE root_id = ? AND path = ?
+            LIMIT 1
+            """,
+            (int(root_id), path),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "size": int(row["size"]),
+            "mtime": float(row["mtime"]),
+            "mime": row["mime"],
+            "md5": row["md5"],
+            "has_video_meta": bool(row["has_video_meta"]),
+            "has_audio_meta": bool(row["has_audio_meta"]),
+            "has_image_meta": bool(row["has_image_meta"]),
+        }
+
+    def delete_all(self) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM files")
+
     def count_by_root(self, root_id: int) -> int:
         cur = self._conn.execute(
             "SELECT COUNT(*) AS cnt FROM files WHERE root_id = ?",
@@ -378,9 +408,14 @@ class SQLiteScanStateRepository:
                 INSERT OR IGNORE INTO scan_state(
                     id, state, started_at, updated_at, finished_at,
                     processed_files, emitted_records, skipped_files, current_root, message,
-                    desired_state, follow_symlinks, worker_last_seen, worker_pid, worker_host
+                    desired_state, follow_symlinks, worker_last_seen, worker_pid, worker_host,
+                    scan_mode, processed_image_files, processed_video_files,
+                    processed_audio_files, processed_other_files, skipped_existing_files
                 )
-                VALUES (1, 'idle', NULL, ?, NULL, 0, 0, 0, NULL, NULL, 'idle', 0, NULL, NULL, NULL)
+                VALUES (
+                    1, 'idle', NULL, ?, NULL, 0, 0, 0, NULL, NULL, 'idle', 0, NULL, NULL, NULL,
+                    'add_new', 0, 0, 0, 0, 0
+                )
                 """,
                 (time.time(),),
             )
@@ -391,7 +426,9 @@ class SQLiteScanStateRepository:
             SELECT
                 state, started_at, updated_at, finished_at,
                 processed_files, emitted_records, skipped_files, current_root, message,
-                desired_state, follow_symlinks, worker_last_seen, worker_pid, worker_host
+                desired_state, follow_symlinks, worker_last_seen, worker_pid, worker_host,
+                scan_mode, processed_image_files, processed_video_files,
+                processed_audio_files, processed_other_files, skipped_existing_files
             FROM scan_state
             WHERE id = 1
             """
@@ -411,9 +448,15 @@ class SQLiteScanStateRepository:
             "message": row["message"],
             "desired_state": row["desired_state"],
             "follow_symlinks": bool(row["follow_symlinks"]),
+            "scan_mode": row["scan_mode"] or "add_new",
             "worker_last_seen": row["worker_last_seen"],
             "worker_pid": row["worker_pid"],
             "worker_host": row["worker_host"],
+            "processed_image_files": int(row["processed_image_files"] or 0),
+            "processed_video_files": int(row["processed_video_files"] or 0),
+            "processed_audio_files": int(row["processed_audio_files"] or 0),
+            "processed_other_files": int(row["processed_other_files"] or 0),
+            "skipped_existing_files": int(row["skipped_existing_files"] or 0),
         }
 
     def touch_worker_heartbeat(self, *, pid: int, host: str) -> None:
@@ -432,28 +475,23 @@ class SQLiteScanStateRepository:
         *,
         desired_state: str,
         follow_symlinks: bool | None = None,
+        scan_mode: str | None = None,
         message: str | None = None,
     ) -> None:
         now = time.time()
-        if follow_symlinks is None:
-            with self._conn:
-                self._conn.execute(
-                    """
-                    UPDATE scan_state
-                    SET desired_state = ?, updated_at = ?, message = ?
-                    WHERE id = 1
-                    """,
-                    (desired_state, now, message),
-                )
-            return
+        fields = ["desired_state = ?", "updated_at = ?", "message = ?"]
+        params: list[Any] = [desired_state, now, message]
+        if follow_symlinks is not None:
+            fields.append("follow_symlinks = ?")
+            params.append(int(follow_symlinks))
+        if scan_mode is not None:
+            fields.append("scan_mode = ?")
+            params.append(scan_mode)
+        params.append(1)
         with self._conn:
             self._conn.execute(
-                """
-                UPDATE scan_state
-                SET desired_state = ?, follow_symlinks = ?, updated_at = ?, message = ?
-                WHERE id = 1
-                """,
-                (desired_state, int(follow_symlinks), now, message),
+                f"UPDATE scan_state SET {', '.join(fields)} WHERE id = ?",
+                params,
             )
 
     def set_running(self, *, current_root: str | None = None, message: str | None = None) -> None:
@@ -471,6 +509,11 @@ class SQLiteScanStateRepository:
                     processed_files = 0,
                     emitted_records = 0,
                     skipped_files = 0,
+                    processed_image_files = 0,
+                    processed_video_files = 0,
+                    processed_audio_files = 0,
+                    processed_other_files = 0,
+                    skipped_existing_files = 0,
                     current_root = ?,
                     message = ?
                 WHERE id = 1
@@ -484,6 +527,11 @@ class SQLiteScanStateRepository:
         processed_files: int,
         emitted_records: int,
         skipped_files: int,
+        processed_image_files: int,
+        processed_video_files: int,
+        processed_audio_files: int,
+        processed_other_files: int,
+        skipped_existing_files: int,
         current_root: str | None,
     ) -> None:
         with self._conn:
@@ -495,6 +543,11 @@ class SQLiteScanStateRepository:
                     processed_files = ?,
                     emitted_records = ?,
                     skipped_files = ?,
+                    processed_image_files = ?,
+                    processed_video_files = ?,
+                    processed_audio_files = ?,
+                    processed_other_files = ?,
+                    skipped_existing_files = ?,
                     current_root = ?
                 WHERE id = 1
                 """,
@@ -503,6 +556,11 @@ class SQLiteScanStateRepository:
                     int(processed_files),
                     int(emitted_records),
                     int(skipped_files),
+                    int(processed_image_files),
+                    int(processed_video_files),
+                    int(processed_audio_files),
+                    int(processed_other_files),
+                    int(skipped_existing_files),
                     current_root,
                 ),
             )

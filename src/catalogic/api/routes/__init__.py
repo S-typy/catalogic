@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -28,6 +28,7 @@ class RootCreateRequest(BaseModel):
 class ScanStartRequest(BaseModel):
     root_ids: list[int] | None = None
     follow_symlinks: bool = False
+    scan_mode: Literal["rebuild", "add_new"] = "add_new"
 
 
 def create_api_router() -> APIRouter:
@@ -82,10 +83,20 @@ def create_api_router() -> APIRouter:
             raise HTTPException(status_code=503, detail="Scanner worker is offline")
         roots = list_roots(db_path)
         selected = [root.path for root in roots]
-        result = manager.start(selected, follow_symlinks=body.follow_symlinks)
+        result = manager.start(
+            selected,
+            follow_symlinks=body.follow_symlinks,
+            scan_mode=body.scan_mode,
+        )
         if not result.started:
             raise HTTPException(status_code=409, detail=result.message)
-        return {"started": True, "message": result.message, "roots": selected}
+        return {
+            "started": True,
+            "message": result.message,
+            "roots": selected,
+            "scan_mode": body.scan_mode,
+            "follow_symlinks": body.follow_symlinks,
+        }
 
     @router.post("/scan/stop")
     def stop_scan(request: Request) -> dict[str, Any]:
@@ -204,5 +215,10 @@ def create_api_router() -> APIRouter:
             "db_path": request.app.state.db_path,
             "frontend_url": f"http://{request.url.hostname}:{request.app.state.frontend_port}",
         }
+
+    @router.get("/state")
+    def get_state(request: Request) -> dict[str, Any]:
+        manager = request.app.state.scanner
+        return manager.diagnostics()
 
     return router
