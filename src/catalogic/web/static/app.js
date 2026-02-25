@@ -1172,12 +1172,19 @@ async function refreshStatus() {
     });
 
   const scanMode = $("scan-mode-select");
-  if (scanMode && status.scan_mode) {
-    scanMode.value = status.scan_mode;
+  const scanActive = status.state === "running" || status.desired_state === "running";
+  if (scanMode) {
+    if (scanActive && status.scan_mode) {
+      scanMode.value = status.scan_mode;
+    }
+    scanMode.disabled = scanActive;
   }
   const followInput = $("follow-symlinks-input");
   if (followInput) {
-    followInput.checked = Boolean(status.follow_symlinks);
+    if (scanActive) {
+      followInput.checked = Boolean(status.follow_symlinks);
+    }
+    followInput.disabled = scanActive;
   }
 
   const startBtn = $("start-scan-btn");
