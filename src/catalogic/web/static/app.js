@@ -1369,6 +1369,26 @@ function updateVideoViewerPlaybackControls({ previewTimeSec = null } = {}) {
   time.textContent = `${formatVideoViewerClock(current)} / ${formatVideoViewerClock(duration)}`;
 }
 
+function safeMediaPlay(media, onReject = null) {
+  if (!media || typeof media.play !== "function") {
+    return;
+  }
+  try {
+    const playPromise = media.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch((err) => {
+        if (typeof onReject === "function") {
+          onReject(err);
+        }
+      });
+    }
+  } catch (err) {
+    if (typeof onReject === "function") {
+      onReject(err);
+    }
+  }
+}
+
 function clearVideoViewerOpenProbeTimer() {
   if (videoViewerState.openProbeTimer !== null) {
     window.clearTimeout(videoViewerState.openProbeTimer);
@@ -1410,7 +1430,7 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
       clearVideoViewerOpenProbeTimer();
       videoViewerState.fallbackReloading = false;
       if (autoplay) {
-        void player.play().catch(() => {});
+        safeMediaPlay(player);
       }
       updateVideoViewerPlaybackControls();
     },
@@ -1737,7 +1757,7 @@ function openVideoViewer(rootId, path, name) {
     t: Date.now(),
   });
   const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0);
-  const activateFallback = () => {
+  const activateFallback = (autoplay = false) => {
     if (!videoViewerState.open || videoViewerState.fallbackUsed) {
       return;
     }
@@ -1754,7 +1774,9 @@ function openVideoViewer(rootId, path, name) {
     });
     player.src = fallbackUrl;
     player.load();
-    void player.play().catch(() => {});
+    if (autoplay) {
+      safeMediaPlay(player);
+    }
     updateVideoViewerPlaybackControls();
   };
 
@@ -1799,7 +1821,7 @@ function openVideoViewer(rootId, path, name) {
       return;
     }
     if (!videoViewerState.fallbackUsed) {
-      activateFallback();
+      activateFallback(!player.paused);
       return;
     }
     videoViewerState.statusNote = t("video_viewer_status_error");
@@ -1814,13 +1836,6 @@ function openVideoViewer(rootId, path, name) {
   });
   player.src = sourceUrl;
   player.load();
-  void player.play().catch((err) => {
-    const errorName = String(err && err.name ? err.name : "");
-    if (errorName === "NotAllowedError" || videoViewerState.hasInitialLayout || videoViewerState.fallbackUsed) {
-      return;
-    }
-    activateFallback();
-  });
   updateVideoViewerPlaybackControls();
 }
 
@@ -2055,7 +2070,7 @@ function initVideoViewer() {
       return;
     }
     if (player.paused) {
-      void player.play().catch(() => {});
+      safeMediaPlay(player);
     } else {
       player.pause();
     }
@@ -2330,7 +2345,7 @@ function createFilePreviewNode(details) {
       const done = () => {
         reloadingBySeek = false;
         if (autoplay) {
-          void video.play().catch(() => {});
+          safeMediaPlay(video);
         }
       };
       video.addEventListener("loadedmetadata", done, { once: true });
@@ -2373,7 +2388,7 @@ function createFilePreviewNode(details) {
       .then(() => {
         if (previewAutostart) {
           video.addEventListener("loadedmetadata", () => {
-            void video.play().catch(() => {});
+            safeMediaPlay(video);
           }, { once: true });
         }
         video.src = buildVideoUrl(0);
