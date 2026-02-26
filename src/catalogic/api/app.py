@@ -62,6 +62,9 @@ def create_app(*, db_path: str, frontend_port: int, browse_root: str = "/") -> F
             raise
         else:
             response.headers["X-Request-ID"] = request_id
+            if request.url.path == "/" or request.url.path.startswith("/static/"):
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             if request.url.path in {"/api/scan/status", "/api/scan/worker"} and response.status_code < 500:
                 level = logging.DEBUG

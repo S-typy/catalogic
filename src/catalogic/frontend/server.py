@@ -21,6 +21,14 @@ def create_frontend_app(api_base: str) -> FastAPI:
     styles_css = static_dir / "styles.css"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    @app.middleware("http")
+    async def no_cache_static(request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index() -> str:
         html = (web_dir / "index.html").read_text(encoding="utf-8")
