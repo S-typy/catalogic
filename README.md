@@ -81,6 +81,24 @@ EN: installer configures systemd units and checks `ffprobe` availability (for vi
 RU: инсталлер также запускает `catalogic db migrate --db ...` автоматически.  
 EN: installer also runs `catalogic db migrate --db ...` automatically.
 
+## Backend Logging
+
+RU:
+- В backend включено структурированное логирование запросов: method/path/status/latency/client и `X-Request-ID`.
+- Параметры в `.env`:
+  - `CATALOGIC_LOG_LEVEL` (`DEBUG|INFO|WARNING|ERROR`)
+  - `CATALOGIC_LOG_JSON` (`0|1`)
+  - `CATALOGIC_BACKEND_LOG_FILE` (путь для ротации файла логов, если пусто — только stdout/journald)
+  - `CATALOGIC_LOG_MAX_BYTES`, `CATALOGIC_LOG_BACKUP_COUNT`
+
+EN:
+- Backend now has structured request logging: method/path/status/latency/client and `X-Request-ID`.
+- Configure via `.env`:
+  - `CATALOGIC_LOG_LEVEL` (`DEBUG|INFO|WARNING|ERROR`)
+  - `CATALOGIC_LOG_JSON` (`0|1`)
+  - `CATALOGIC_BACKEND_LOG_FILE` (rotating file path; empty means stdout/journald only)
+  - `CATALOGIC_LOG_MAX_BYTES`, `CATALOGIC_LOG_BACKUP_COUNT`
+
 ## Frontend Notes
 
 RU:
