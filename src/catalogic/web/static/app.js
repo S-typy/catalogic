@@ -2371,30 +2371,38 @@ function createFilePreviewNode(details) {
     const note = document.createElement("div");
     note.className = "file-preview-note";
     note.textContent = t("file_preview_video_seek_hint");
-    const useTranscodedPreview = !isLikelyNativeBrowserVideoMime(mime);
+    let useTranscodedPreview = !isLikelyNativeBrowserVideoMime(mime);
+    let openProbeTimer = null;
 
-    const buildVideoUrl = (startSec) =>
-      useTranscodedPreview
-        ? buildApiUrl("/api/file/preview/video", {
-            root_id: details.root_id,
-            path: details.path,
-            start_sec: Number.isFinite(startSec) ? Number(startSec).toFixed(3) : "0.000",
-            width: 640,
-            video_bitrate_kbps: 700,
-            audio_bitrate_kbps: 96,
-          })
-        : buildApiUrl("/api/file/view/video", {
-            root_id: details.root_id,
-            path: details.path,
-            t: Date.now(),
-          });
+    const clearOpenProbeTimer = () => {
+      if (openProbeTimer !== null) {
+        window.clearTimeout(openProbeTimer);
+        openProbeTimer = null;
+      }
+    };
+
+    const buildTranscodedUrl = (startSec) =>
+      buildApiUrl("/api/file/preview/video", {
+        root_id: details.root_id,
+        path: details.path,
+        start_sec: Number.isFinite(startSec) ? Number(startSec).toFixed(3) : "0.000",
+        width: 640,
+        video_bitrate_kbps: 700,
+        audio_bitrate_kbps: 96,
+      });
+    const buildDirectUrl = () =>
+      buildApiUrl("/api/file/view/video", {
+        root_id: details.root_id,
+        path: details.path,
+        t: Date.now(),
+      });
 
     let reloadingBySeek = false;
     let skipNextSeeking = false;
     const restartFrom = (startSec, autoplay) => {
       reloadingBySeek = true;
       skipNextSeeking = true;
-      video.src = buildVideoUrl(startSec);
+      video.src = buildTranscodedUrl(startSec);
       video.load();
       const done = () => {
         reloadingBySeek = false;
@@ -2408,17 +2416,8 @@ function createFilePreviewNode(details) {
       }, { once: true });
     };
 
-    const loadPreview = (autoplay) => {
+    const loadTranscodedPreview = (autoplay, startSec = 0) => {
       note.textContent = t("file_preview_loading");
-      if (!useTranscodedPreview) {
-        note.textContent = t("file_preview_video_seek_hint");
-        video.src = buildVideoUrl(0);
-        video.load();
-        if (autoplay) {
-          safeMediaPlay(video);
-        }
-        return;
-      }
       const checkUrl = buildApiUrl("/api/file/preview/video/check", {
         root_id: details.root_id,
         path: details.path,
@@ -2441,13 +2440,66 @@ function createFilePreviewNode(details) {
               { once: true }
             );
           }
-          video.src = buildVideoUrl(0);
+          video.src = buildTranscodedUrl(startSec);
           video.load();
+          video.addEventListener(
+            "error",
+            () => {
+              note.textContent = t("file_preview_failed");
+              note.classList.add("file-preview-error");
+            },
+            { once: true }
+          );
         })
         .catch((err) => {
           note.textContent = `${t("file_preview_failed")} ${extractApiErrorMessage(err.message)}`.trim();
           note.classList.add("file-preview-error");
         });
+    };
+
+    const switchToTranscoded = (autoplay) => {
+      if (useTranscodedPreview) {
+        return;
+      }
+      useTranscodedPreview = true;
+      clearOpenProbeTimer();
+      loadTranscodedPreview(autoplay);
+    };
+
+    const loadPreview = (autoplay) => {
+      if (useTranscodedPreview) {
+        loadTranscodedPreview(autoplay);
+        return;
+      }
+      note.textContent = t("file_preview_loading");
+      clearOpenProbeTimer();
+      openProbeTimer = window.setTimeout(() => {
+        openProbeTimer = null;
+        switchToTranscoded(autoplay);
+      }, 3000);
+      video.addEventListener(
+        "loadedmetadata",
+        () => {
+          clearOpenProbeTimer();
+          note.textContent = t("file_preview_video_seek_hint");
+        },
+        { once: true }
+      );
+      video.addEventListener(
+        "error",
+        () => {
+          clearOpenProbeTimer();
+          switchToTranscoded(autoplay);
+        },
+        { once: true }
+      );
+      video.src = buildDirectUrl();
+      video.load();
+      if (autoplay) {
+        safeMediaPlay(video, () => {
+          switchToTranscoded(autoplay);
+        });
+      }
     };
 
     video.addEventListener("seeking", () => {
@@ -2466,11 +2518,6 @@ function createFilePreviewNode(details) {
         return;
       }
       restartFrom(target, previewAutostart || !video.paused);
-    });
-
-    video.addEventListener("error", () => {
-      note.textContent = t("file_preview_failed");
-      note.classList.add("file-preview-error");
     });
 
     loadPreview(true);
