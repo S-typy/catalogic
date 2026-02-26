@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from catalogic.app import ScannerService
@@ -93,8 +93,27 @@ def create_app(*, db_path: str, frontend_port: int, browse_root: str = "/") -> F
     def on_shutdown() -> None:
         logger.info("api shutdown")
 
-    @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        return FileResponse(str(web_dir / "index.html"))
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def index() -> str:
+        app_js = static_dir / "app.js"
+        styles_css = static_dir / "styles.css"
+        version = str(
+            int(
+                max(
+                    app_js.stat().st_mtime if app_js.exists() else 0,
+                    styles_css.stat().st_mtime if styles_css.exists() else 0,
+                )
+            )
+        )
+        html = (web_dir / "index.html").read_text(encoding="utf-8")
+        html = html.replace(
+            "<link rel=\"stylesheet\" href=\"/static/styles.css\">",
+            f"<link rel=\"stylesheet\" href=\"/static/styles.css?v={version}\">",
+        )
+        html = html.replace(
+            "<script src=\"/static/app.js\"></script>",
+            f"<script src=\"/static/app.js?v={version}\"></script>",
+        )
+        return html
 
     return app

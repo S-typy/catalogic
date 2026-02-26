@@ -2371,16 +2371,23 @@ function createFilePreviewNode(details) {
     const note = document.createElement("div");
     note.className = "file-preview-note";
     note.textContent = t("file_preview_video_seek_hint");
+    const useTranscodedPreview = !isLikelyNativeBrowserVideoMime(mime);
 
     const buildVideoUrl = (startSec) =>
-      buildApiUrl("/api/file/preview/video", {
-        root_id: details.root_id,
-        path: details.path,
-        start_sec: Number.isFinite(startSec) ? Number(startSec).toFixed(3) : "0.000",
-        width: 640,
-        video_bitrate_kbps: 700,
-        audio_bitrate_kbps: 96,
-      });
+      useTranscodedPreview
+        ? buildApiUrl("/api/file/preview/video", {
+            root_id: details.root_id,
+            path: details.path,
+            start_sec: Number.isFinite(startSec) ? Number(startSec).toFixed(3) : "0.000",
+            width: 640,
+            video_bitrate_kbps: 700,
+            audio_bitrate_kbps: 96,
+          })
+        : buildApiUrl("/api/file/view/video", {
+            root_id: details.root_id,
+            path: details.path,
+            t: Date.now(),
+          });
 
     let reloadingBySeek = false;
     let skipNextSeeking = false;
@@ -2403,6 +2410,15 @@ function createFilePreviewNode(details) {
 
     const loadPreview = (autoplay) => {
       note.textContent = t("file_preview_loading");
+      if (!useTranscodedPreview) {
+        note.textContent = t("file_preview_video_seek_hint");
+        video.src = buildVideoUrl(0);
+        video.load();
+        if (autoplay) {
+          safeMediaPlay(video);
+        }
+        return;
+      }
       const checkUrl = buildApiUrl("/api/file/preview/video/check", {
         root_id: details.root_id,
         path: details.path,
@@ -2435,6 +2451,9 @@ function createFilePreviewNode(details) {
     };
 
     video.addEventListener("seeking", () => {
+      if (!useTranscodedPreview) {
+        return;
+      }
       if (reloadingBySeek) {
         return;
       }

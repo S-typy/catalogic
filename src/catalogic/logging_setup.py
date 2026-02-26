@@ -68,9 +68,10 @@ def _build_handlers(
     log_file: str | None,
     max_bytes: int,
     backup_count: int,
-) -> list[logging.Handler]:
+) -> tuple[list[logging.Handler], str | None]:
     request_filter = RequestIdFilter()
     handlers: list[logging.Handler] = []
+    file_log_error: str | None = None
 
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
@@ -78,19 +79,26 @@ def _build_handlers(
     handlers.append(stream_handler)
 
     if log_file:
-        log_path = Path(log_file).expanduser()
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
-            filename=str(log_path),
-            maxBytes=max(1, int(max_bytes)),
-            backupCount=max(1, int(backup_count)),
-            encoding="utf-8",
-        )
-        file_handler.setFormatter(formatter)
-        file_handler.addFilter(request_filter)
-        handlers.append(file_handler)
+        try:
+            log_path = Path(log_file).expanduser()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = RotatingFileHandler(
+                filename=str(log_path),
+                maxBytes=max(1, int(max_bytes)),
+                backupCount=max(1, int(backup_count)),
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(formatter)
+            file_handler.addFilter(request_filter)
+            handlers.append(file_handler)
+        except OSError as err:
+            file_log_error = f"{log_file}: {err}"
+            print(
+                f"[catalogic] WARNING: cannot enable file logging ({file_log_error}), using stdout only",
+                file=sys.stderr,
+            )
 
-    return handlers
+    return handlers, file_log_error
 
 
 def configure_logging(
@@ -104,7 +112,7 @@ def configure_logging(
 ) -> None:
     level_no = _resolve_level(level)
     formatter = _build_formatter(json_logs)
-    handlers = _build_handlers(
+    handlers, file_log_error = _build_handlers(
         formatter=formatter,
         log_file=log_file,
         max_bytes=max_bytes,
@@ -133,3 +141,9 @@ def configure_logging(
         bool(json_logs),
         log_file or "-",
     )
+    if file_log_error:
+        logging.getLogger("catalogic.bootstrap").warning(
+            "file logging disabled service=%s reason=%s",
+            service_name,
+            file_log_error,
+        )
