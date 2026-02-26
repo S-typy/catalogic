@@ -1384,6 +1384,22 @@ function updateVideoViewerPlaybackControls({ previewTimeSec = null } = {}) {
   time.textContent = `${formatVideoViewerClock(current)} / ${formatVideoViewerClock(duration)}`;
 }
 
+function stopInlineVideoPreviews() {
+  const nodes = document.querySelectorAll(".file-preview-video");
+  nodes.forEach((node) => {
+    if (!(node instanceof HTMLVideoElement)) {
+      return;
+    }
+    try {
+      node.pause();
+    } catch {
+      // noop
+    }
+    node.removeAttribute("src");
+    node.load();
+  });
+}
+
 function safeMediaPlay(media, onReject = null) {
   if (!media || typeof media.play !== "function") {
     return;
@@ -1697,6 +1713,7 @@ function openImageViewer(rootId, path, name) {
   if (videoViewerState.open) {
     closeVideoViewer();
   }
+  stopInlineVideoPreviews();
   const overlay = $("image-viewer-overlay");
   const img = $("image-viewer-img");
   const status = $("viewer-status");
@@ -1734,6 +1751,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
   if (imageViewerState.open) {
     closeImageViewer();
   }
+  stopInlineVideoPreviews();
   const overlay = $("video-viewer-overlay");
   const player = $("video-viewer-player");
   const status = $("video-viewer-status");
@@ -1845,12 +1863,6 @@ function openVideoViewer(rootId, path, name, mime = "") {
     updateVideoViewerPlaybackControls();
   };
   if (nativeDirectPreferred) {
-    armVideoViewerOpenProbeTimer(3500, () => {
-      if (!videoViewerState.open || videoViewerState.hasInitialLayout) {
-        return;
-      }
-      activateFallback();
-    });
     player.src = sourceUrl;
     player.load();
   } else {
@@ -2456,9 +2468,7 @@ function createFilePreviewNode(details) {
       note.classList.add("file-preview-error");
     });
 
-    if (previewAutostart) {
-      loadPreview(true);
-    }
+    // Inline preview loads only on explicit user action to avoid ffmpeg storms.
 
     container.appendChild(loadBtn);
     container.appendChild(video);
