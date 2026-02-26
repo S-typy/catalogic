@@ -22,6 +22,14 @@ class Settings:
     log_backup_count: int
 
 
+def _env_str(name: str, default: str) -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    return value if value else default
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -37,15 +45,18 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def load_settings() -> Settings:
-    db_path = os.getenv("CATALOGIC_DB_PATH", str(Path.cwd() / "data" / "catalogic.db"))
-    host = os.getenv("CATALOGIC_HOST", "0.0.0.0")
+    db_path = _env_str("CATALOGIC_DB_PATH", str(Path.cwd() / "data" / "catalogic.db"))
+    host = _env_str("CATALOGIC_HOST", "0.0.0.0")
     port = _env_int("CATALOGIC_PORT", 8080)
-    frontend_host = os.getenv("CATALOGIC_FRONTEND_HOST", "0.0.0.0")
+    frontend_host = _env_str("CATALOGIC_FRONTEND_HOST", "0.0.0.0")
     frontend_port = _env_int("CATALOGIC_FRONTEND_PORT", 8081)
-    browse_root = os.getenv("CATALOGIC_BROWSE_ROOT", "/")
-    log_level = os.getenv("CATALOGIC_LOG_LEVEL", "INFO")
+    browse_root = _env_str("CATALOGIC_BROWSE_ROOT", "/")
+    log_level = _env_str("CATALOGIC_LOG_LEVEL", "INFO")
     log_json = _env_bool("CATALOGIC_LOG_JSON", False)
-    backend_log_file = os.getenv("CATALOGIC_BACKEND_LOG_FILE")
+    backend_log_file_raw = os.getenv("CATALOGIC_BACKEND_LOG_FILE")
+    backend_log_file = backend_log_file_raw.strip() if backend_log_file_raw is not None else None
+    if backend_log_file == "":
+        backend_log_file = None
     log_max_bytes = _env_int("CATALOGIC_LOG_MAX_BYTES", 10 * 1024 * 1024)
     log_backup_count = _env_int("CATALOGIC_LOG_BACKUP_COUNT", 5)
     return Settings(

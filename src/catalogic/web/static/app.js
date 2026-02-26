@@ -94,7 +94,6 @@ const I18N = {
     file_preview_loading: "Загрузка превью...",
     file_preview_not_available: "Превью недоступно для этого типа файла.",
     file_preview_failed: "Не удалось загрузить превью файла.",
-    file_preview_load_btn: "Загрузить превью",
     file_preview_video_seek_hint: "Перемотка перезапускает поток с выбранного момента.",
     viewer_btn_100: "100%",
     viewer_btn_fit: "По экрану",
@@ -239,7 +238,6 @@ const I18N = {
     file_preview_loading: "Loading preview...",
     file_preview_not_available: "Preview is not available for this file type.",
     file_preview_failed: "Failed to load file preview.",
-    file_preview_load_btn: "Load preview",
     file_preview_video_seek_hint: "Seeking reloads the stream from selected position.",
     viewer_btn_100: "100%",
     viewer_btn_fit: "Fit",
@@ -1748,6 +1746,9 @@ function openImageViewer(rootId, path, name) {
 }
 
 function openVideoViewer(rootId, path, name, mime = "") {
+  if (videoViewerState.open) {
+    closeVideoViewer();
+  }
   if (imageViewerState.open) {
     closeImageViewer();
   }
@@ -1863,10 +1864,23 @@ function openVideoViewer(rootId, path, name, mime = "") {
     updateVideoViewerPlaybackControls();
   };
   if (nativeDirectPreferred) {
+    armVideoViewerOpenProbeTimer(3500, () => {
+      if (!videoViewerState.open || videoViewerState.hasInitialLayout) {
+        return;
+      }
+      activateFallback();
+    });
     player.src = sourceUrl;
     player.load();
+    safeMediaPlay(player, (err) => {
+      const errorName = String(err && err.name ? err.name : "");
+      if (errorName === "NotAllowedError" || videoViewerState.hasInitialLayout || videoViewerState.fallbackUsed) {
+        return;
+      }
+      activateFallback();
+    });
   } else {
-    activateFallback();
+    activateFallback(true);
   }
   updateVideoViewerPlaybackControls();
 }
@@ -2357,9 +2371,6 @@ function createFilePreviewNode(details) {
     const note = document.createElement("div");
     note.className = "file-preview-note";
     note.textContent = t("file_preview_video_seek_hint");
-    const loadBtn = document.createElement("button");
-    loadBtn.type = "button";
-    loadBtn.textContent = t("file_preview_load_btn");
 
     const buildVideoUrl = (startSec) =>
       buildApiUrl("/api/file/preview/video", {
@@ -2373,8 +2384,6 @@ function createFilePreviewNode(details) {
 
     let reloadingBySeek = false;
     let skipNextSeeking = false;
-    let previewLoaded = false;
-    let previewLoadInProgress = false;
     const restartFrom = (startSec, autoplay) => {
       reloadingBySeek = true;
       skipNextSeeking = true;
@@ -2393,14 +2402,6 @@ function createFilePreviewNode(details) {
     };
 
     const loadPreview = (autoplay) => {
-      if (previewLoaded || previewLoadInProgress) {
-        if (autoplay) {
-          safeMediaPlay(video);
-        }
-        return;
-      }
-      previewLoadInProgress = true;
-      loadBtn.disabled = true;
       note.textContent = t("file_preview_loading");
       const checkUrl = buildApiUrl("/api/file/preview/video/check", {
         root_id: details.root_id,
@@ -2414,10 +2415,7 @@ function createFilePreviewNode(details) {
           }
         })
         .then(() => {
-          previewLoaded = true;
-          previewLoadInProgress = false;
           note.textContent = t("file_preview_video_seek_hint");
-          loadBtn.classList.add("hidden");
           if (autoplay) {
             video.addEventListener(
               "loadedmetadata",
@@ -2431,25 +2429,13 @@ function createFilePreviewNode(details) {
           video.load();
         })
         .catch((err) => {
-          previewLoadInProgress = false;
-          loadBtn.disabled = false;
           note.textContent = `${t("file_preview_failed")} ${extractApiErrorMessage(err.message)}`.trim();
           note.classList.add("file-preview-error");
         });
     };
 
-    loadBtn.onclick = () => loadPreview(previewAutostart);
-    video.addEventListener("play", () => {
-      if (!previewLoaded) {
-        loadPreview(true);
-      }
-    });
-
     video.addEventListener("seeking", () => {
       if (reloadingBySeek) {
-        return;
-      }
-      if (!previewLoaded) {
         return;
       }
       if (skipNextSeeking) {
@@ -2468,9 +2454,8 @@ function createFilePreviewNode(details) {
       note.classList.add("file-preview-error");
     });
 
-    // Inline preview loads only on explicit user action to avoid ffmpeg storms.
+    loadPreview(true);
 
-    container.appendChild(loadBtn);
     container.appendChild(video);
     container.appendChild(note);
     return container;
