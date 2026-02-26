@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from threading import BoundedSemaphore, Lock
 import time
 from typing import Any, Literal
 
@@ -54,6 +55,28 @@ class ScannerSettingsRequest(BaseModel):
 
 def create_api_router() -> APIRouter:
     router = APIRouter(prefix="/api")
+    def _clamp_int(raw: str | None, default: int, *, minimum: int, maximum: int) -> int:
+        try:
+            value = int(str(raw if raw is not None else default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    preview_max_procs = _clamp_int(
+        os.getenv("CATALOGIC_PREVIEW_MAX_PROCS"),
+        2,
+        minimum=1,
+        maximum=32,
+    )
+    preview_ffmpeg_threads = _clamp_int(
+        os.getenv("CATALOGIC_PREVIEW_FFMPEG_THREADS"),
+        1,
+        minimum=1,
+        maximum=16,
+    )
+    preview_slots = BoundedSemaphore(preview_max_procs)
+    preview_active = 0
+    preview_lock = Lock()
 
     def _resolve_inside_root(raw_path: str | None, browse_root: str) -> tuple[Path, Path]:
         root = Path(browse_root).expanduser().resolve()
@@ -355,10 +378,19 @@ def create_api_router() -> APIRouter:
         root_id: int = Query(ge=1),
         path: str = Query(min_length=1),
     ) -> FileResponse:
+        started = time.perf_counter()
         file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
         if not _is_likely_video(file_path, mime):
             raise HTTPException(status_code=415, detail="Video viewer is supported only for video files")
         media_type = _resolve_media_type(file_path, mime, "video/")
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        logger.info(
+            "file.view.video ok root_id=%s path=%s media_type=%s elapsed_ms=%.1f",
+            root_id,
+            path,
+            media_type,
+            elapsed_ms,
+        )
         return FileResponse(
             path=str(file_path),
             media_type=media_type,
@@ -376,6 +408,7 @@ def create_api_router() -> APIRouter:
         video_bitrate_kbps: int = Query(default=700, ge=180, le=4000),
         audio_bitrate_kbps: int = Query(default=96, ge=48, le=256),
     ) -> StreamingResponse:
+        started = time.perf_counter()
         file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
         if not _is_likely_video(file_path, mime):
             raise HTTPException(status_code=415, detail="Video preview is supported only for video files")
@@ -384,12 +417,25 @@ def create_api_router() -> APIRouter:
         if not ffmpeg:
             raise HTTPException(status_code=503, detail="ffmpeg is not available")
 
+        acquired = preview_slots.acquire(blocking=False)
+        if not acquired:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many concurrent video preview requests (limit={preview_max_procs})",
+            )
+        nonlocal preview_active
+        with preview_lock:
+            preview_active += 1
+            active_now = preview_active
+
         ffmpeg_cmd = [
             ffmpeg,
             "-hide_banner",
             "-loglevel",
             "error",
             "-nostdin",
+            "-threads",
+            str(preview_ffmpeg_threads),
             "-ss",
             f"{float(start_sec):.3f}",
             "-i",
@@ -428,6 +474,19 @@ def create_api_router() -> APIRouter:
             "mp4",
             "pipe:1",
         ]
+        logger.info(
+            "file.preview.video start root_id=%s path=%s start_sec=%.3f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s",
+            root_id,
+            path,
+            float(start_sec),
+            width,
+            video_bitrate_kbps,
+            audio_bitrate_kbps,
+            ffmpeg,
+            preview_ffmpeg_threads,
+            active_now,
+            preview_max_procs,
+        )
 
         try:
             proc = subprocess.Popen(
@@ -437,18 +496,26 @@ def create_api_router() -> APIRouter:
                 bufsize=0,
             )
         except OSError as e:
+            with preview_lock:
+                preview_active = max(0, preview_active - 1)
+            preview_slots.release()
             raise HTTPException(status_code=500, detail=f"Cannot start ffmpeg: {e}") from e
 
         if proc.stdout is None:
             proc.kill()
+            with preview_lock:
+                preview_active = max(0, preview_active - 1)
+            preview_slots.release()
             raise HTTPException(status_code=500, detail="ffmpeg pipe is not available")
 
         def _iter_video() -> Any:
+            emitted_bytes = 0
             try:
                 while True:
                     chunk = proc.stdout.read(64 * 1024)
                     if not chunk:
                         break
+                    emitted_bytes += len(chunk)
                     yield chunk
             finally:
                 try:
@@ -461,6 +528,19 @@ def create_api_router() -> APIRouter:
                         proc.wait(timeout=1.0)
                     except subprocess.TimeoutExpired:
                         proc.kill()
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                logger.info(
+                    "file.preview.video done root_id=%s path=%s pid=%s rc=%s emitted_bytes=%s elapsed_ms=%.1f",
+                    root_id,
+                    path,
+                    proc.pid,
+                    proc.returncode,
+                    emitted_bytes,
+                    elapsed_ms,
+                )
+                with preview_lock:
+                    preview_active = max(0, preview_active - 1)
+                preview_slots.release()
 
         return StreamingResponse(
             _iter_video(),
@@ -480,6 +560,7 @@ def create_api_router() -> APIRouter:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise HTTPException(status_code=503, detail="ffmpeg is not available")
+        logger.info("file.preview.video.check ok root_id=%s path=%s ffmpeg=%s", root_id, path, ffmpeg)
         return {"ok": True, "ffmpeg": ffmpeg}
 
     @router.get("/search")

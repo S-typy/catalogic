@@ -63,7 +63,10 @@ def create_app(*, db_path: str, frontend_port: int, browse_root: str = "/") -> F
         else:
             response.headers["X-Request-ID"] = request_id
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            level = logging.WARNING if response.status_code >= 500 else logging.INFO
+            if request.url.path in {"/api/scan/status", "/api/scan/worker"} and response.status_code < 500:
+                level = logging.DEBUG
+            else:
+                level = logging.WARNING if response.status_code >= 500 else logging.INFO
             request_logger.log(
                 level,
                 "http_request method=%s path=%s query=%s status=%s client=%s elapsed_ms=%.1f",

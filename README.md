@@ -90,6 +90,8 @@ RU:
   - `CATALOGIC_LOG_JSON` (`0|1`)
   - `CATALOGIC_BACKEND_LOG_FILE` (путь для ротации файла логов, если пусто — только stdout/journald)
   - `CATALOGIC_LOG_MAX_BYTES`, `CATALOGIC_LOG_BACKUP_COUNT`
+  - `CATALOGIC_PREVIEW_MAX_PROCS` (макс. число параллельных ffmpeg preview процессов)
+  - `CATALOGIC_PREVIEW_FFMPEG_THREADS` (число потоков на один ffmpeg preview процесс)
 
 EN:
 - Backend now has structured request logging: method/path/status/latency/client and `X-Request-ID`.
@@ -98,6 +100,8 @@ EN:
   - `CATALOGIC_LOG_JSON` (`0|1`)
   - `CATALOGIC_BACKEND_LOG_FILE` (rotating file path; empty means stdout/journald only)
   - `CATALOGIC_LOG_MAX_BYTES`, `CATALOGIC_LOG_BACKUP_COUNT`
+  - `CATALOGIC_PREVIEW_MAX_PROCS` (max concurrent ffmpeg preview workers)
+  - `CATALOGIC_PREVIEW_FFMPEG_THREADS` (threads per ffmpeg preview worker)
 
 ## Frontend Notes
 
