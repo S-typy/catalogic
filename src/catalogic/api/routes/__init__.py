@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 from threading import BoundedSemaphore, Lock
 import time
 from typing import Any, Literal
@@ -18,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
+from starlette.background import BackgroundTask
 
 from catalogic.app import (
     add_root,
@@ -74,9 +76,40 @@ def create_api_router() -> APIRouter:
         minimum=1,
         maximum=16,
     )
+    def _clamp_float(raw: str | None, default: float, *, minimum: float, maximum: float) -> float:
+        try:
+            value = float(str(raw if raw is not None else default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    preview_first_byte_timeout_sec = _clamp_float(
+        os.getenv("CATALOGIC_PREVIEW_FIRST_BYTE_TIMEOUT_SEC"),
+        8.0,
+        minimum=1.0,
+        maximum=30.0,
+    )
+    preview_segment_sec = _clamp_float(
+        os.getenv("CATALOGIC_PREVIEW_SEGMENT_SEC"),
+        60.0,
+        minimum=5.0,
+        maximum=900.0,
+    )
+    preview_transcode_timeout_sec = _clamp_float(
+        os.getenv("CATALOGIC_PREVIEW_TRANSCODE_TIMEOUT_SEC"),
+        120.0,
+        minimum=5.0,
+        maximum=1800.0,
+    )
     preview_slots = BoundedSemaphore(preview_max_procs)
     preview_active = 0
     preview_lock = Lock()
+
+    def _cleanup_temp_file(path: str) -> None:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _resolve_inside_root(raw_path: str | None, browse_root: str) -> tuple[Path, Path]:
         root = Path(browse_root).expanduser().resolve()
@@ -438,6 +471,8 @@ def create_api_router() -> APIRouter:
             str(preview_ffmpeg_threads),
             "-ss",
             f"{float(start_sec):.3f}",
+            "-t",
+            f"{float(preview_segment_sec):.3f}",
             "-i",
             str(file_path),
             "-map",
@@ -454,6 +489,10 @@ def create_api_router() -> APIRouter:
             "veryfast",
             "-crf",
             "33",
+            "-pix_fmt",
+            "yuv420p",
+            "-profile:v",
+            "main",
             "-maxrate",
             f"{int(video_bitrate_kbps)}k",
             "-bufsize",
@@ -469,16 +508,16 @@ def create_api_router() -> APIRouter:
             "-ar",
             "44100",
             "-movflags",
-            "frag_keyframe+empty_moov+default_base_moof",
+            "+faststart",
             "-f",
             "mp4",
-            "pipe:1",
         ]
         logger.info(
-            "file.preview.video start root_id=%s path=%s start_sec=%.3f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s",
+            "file.preview.video start root_id=%s path=%s start_sec=%.3f segment_sec=%.1f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s",
             root_id,
             path,
             float(start_sec),
+            float(preview_segment_sec),
             width,
             video_bitrate_kbps,
             audio_bitrate_kbps,
@@ -488,64 +527,71 @@ def create_api_router() -> APIRouter:
             preview_max_procs,
         )
 
+        tmp_path: str | None = None
         try:
-            proc = subprocess.Popen(
+            fd, raw_tmp_path = tempfile.mkstemp(prefix="catalogic_preview_", suffix=".mp4")
+            os.close(fd)
+            tmp_path = raw_tmp_path
+            ffmpeg_cmd.append(tmp_path)
+            completed = subprocess.run(
                 ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                bufsize=0,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=float(preview_transcode_timeout_sec),
             )
+        except subprocess.TimeoutExpired:
+            with preview_lock:
+                preview_active = max(0, preview_active - 1)
+            preview_slots.release()
+            if tmp_path:
+                _cleanup_temp_file(tmp_path)
+            raise HTTPException(status_code=504, detail="Video preview transcode timeout")
         except OSError as e:
             with preview_lock:
                 preview_active = max(0, preview_active - 1)
             preview_slots.release()
+            if tmp_path:
+                _cleanup_temp_file(tmp_path)
             raise HTTPException(status_code=500, detail=f"Cannot start ffmpeg: {e}") from e
 
-        if proc.stdout is None:
-            proc.kill()
+        if completed.returncode != 0 or tmp_path is None or not Path(tmp_path).exists() or Path(tmp_path).stat().st_size <= 0:
+            if tmp_path:
+                _cleanup_temp_file(tmp_path)
             with preview_lock:
                 preview_active = max(0, preview_active - 1)
             preview_slots.release()
-            raise HTTPException(status_code=500, detail="ffmpeg pipe is not available")
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            logger.warning(
+                "file.preview.video failed root_id=%s path=%s rc=%s elapsed_ms=%.1f stderr=%s",
+                root_id,
+                path,
+                completed.returncode,
+                elapsed_ms,
+                (completed.stderr or "").strip()[:1000],
+            )
+            raise HTTPException(status_code=500, detail="Cannot transcode video preview")
 
-        def _iter_video() -> Any:
-            emitted_bytes = 0
-            try:
-                while True:
-                    chunk = proc.stdout.read(64 * 1024)
-                    if not chunk:
-                        break
-                    emitted_bytes += len(chunk)
-                    yield chunk
-            finally:
-                try:
-                    if proc.stdout:
-                        proc.stdout.close()
-                finally:
-                    if proc.poll() is None:
-                        proc.kill()
-                    try:
-                        proc.wait(timeout=1.0)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                elapsed_ms = (time.perf_counter() - started) * 1000.0
-                logger.info(
-                    "file.preview.video done root_id=%s path=%s pid=%s rc=%s emitted_bytes=%s elapsed_ms=%.1f",
-                    root_id,
-                    path,
-                    proc.pid,
-                    proc.returncode,
-                    emitted_bytes,
-                    elapsed_ms,
-                )
-                with preview_lock:
-                    preview_active = max(0, preview_active - 1)
-                preview_slots.release()
+        out_size = Path(tmp_path).stat().st_size
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        logger.info(
+            "file.preview.video done root_id=%s path=%s rc=%s out_bytes=%s elapsed_ms=%.1f",
+            root_id,
+            path,
+            completed.returncode,
+            out_size,
+            elapsed_ms,
+        )
+        with preview_lock:
+            preview_active = max(0, preview_active - 1)
+        preview_slots.release()
 
-        return StreamingResponse(
-            _iter_video(),
+        return FileResponse(
+            path=tmp_path,
             media_type="video/mp4",
+            filename=f"{file_path.stem}.preview.mp4",
             headers={"Cache-Control": "no-store"},
+            background=BackgroundTask(_cleanup_temp_file, tmp_path),
         )
 
     @router.get("/file/preview/video/check")
