@@ -1785,13 +1785,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
   player.controls = false;
   player.title = name || path || "video";
 
-  const sourceUrl = buildApiUrl("/api/file/view/video", {
-    root_id: rootId,
-    path,
-    t: Date.now(),
-  });
   const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0);
-  const nativeDirectPreferred = isLikelyNativeBrowserVideoMime(mime);
   const activateFallback = (autoplay = false) => {
     if (!videoViewerState.open || videoViewerState.fallbackUsed) {
       return;
@@ -1863,25 +1857,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
     updateVideoViewerStatus();
     updateVideoViewerPlaybackControls();
   };
-  if (nativeDirectPreferred) {
-    armVideoViewerOpenProbeTimer(3500, () => {
-      if (!videoViewerState.open || videoViewerState.hasInitialLayout) {
-        return;
-      }
-      activateFallback();
-    });
-    player.src = sourceUrl;
-    player.load();
-    safeMediaPlay(player, (err) => {
-      const errorName = String(err && err.name ? err.name : "");
-      if (errorName === "NotAllowedError" || videoViewerState.hasInitialLayout || videoViewerState.fallbackUsed) {
-        return;
-      }
-      activateFallback();
-    });
-  } else {
-    activateFallback(true);
-  }
+  activateFallback(true);
   updateVideoViewerPlaybackControls();
 }
 
@@ -2371,15 +2347,7 @@ function createFilePreviewNode(details) {
     const note = document.createElement("div");
     note.className = "file-preview-note";
     note.textContent = t("file_preview_video_seek_hint");
-    let useTranscodedPreview = !isLikelyNativeBrowserVideoMime(mime);
-    let openProbeTimer = null;
-
-    const clearOpenProbeTimer = () => {
-      if (openProbeTimer !== null) {
-        window.clearTimeout(openProbeTimer);
-        openProbeTimer = null;
-      }
-    };
+    const useTranscodedPreview = true;
 
     const buildTranscodedUrl = (startSec) =>
       buildApiUrl("/api/file/preview/video", {
@@ -2390,13 +2358,6 @@ function createFilePreviewNode(details) {
         video_bitrate_kbps: 700,
         audio_bitrate_kbps: 96,
       });
-    const buildDirectUrl = () =>
-      buildApiUrl("/api/file/view/video", {
-        root_id: details.root_id,
-        path: details.path,
-        t: Date.now(),
-      });
-
     let reloadingBySeek = false;
     let skipNextSeeking = false;
     const restartFrom = (startSec, autoplay) => {
@@ -2457,49 +2418,8 @@ function createFilePreviewNode(details) {
         });
     };
 
-    const switchToTranscoded = (autoplay) => {
-      if (useTranscodedPreview) {
-        return;
-      }
-      useTranscodedPreview = true;
-      clearOpenProbeTimer();
-      loadTranscodedPreview(autoplay);
-    };
-
     const loadPreview = (autoplay) => {
-      if (useTranscodedPreview) {
-        loadTranscodedPreview(autoplay);
-        return;
-      }
-      note.textContent = t("file_preview_loading");
-      clearOpenProbeTimer();
-      openProbeTimer = window.setTimeout(() => {
-        openProbeTimer = null;
-        switchToTranscoded(autoplay);
-      }, 3000);
-      video.addEventListener(
-        "loadedmetadata",
-        () => {
-          clearOpenProbeTimer();
-          note.textContent = t("file_preview_video_seek_hint");
-        },
-        { once: true }
-      );
-      video.addEventListener(
-        "error",
-        () => {
-          clearOpenProbeTimer();
-          switchToTranscoded(autoplay);
-        },
-        { once: true }
-      );
-      video.src = buildDirectUrl();
-      video.load();
-      if (autoplay) {
-        safeMediaPlay(video, () => {
-          switchToTranscoded(autoplay);
-        });
-      }
+      loadTranscodedPreview(autoplay);
     };
 
     video.addEventListener("seeking", () => {
