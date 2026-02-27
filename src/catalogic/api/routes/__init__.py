@@ -90,7 +90,7 @@ def create_api_router() -> APIRouter:
     )
     preview_segment_sec = _clamp_float(
         os.getenv("CATALOGIC_PREVIEW_SEGMENT_SEC"),
-        60.0,
+        12.0,
         minimum=5.0,
         maximum=900.0,
     )
@@ -438,6 +438,7 @@ def create_api_router() -> APIRouter:
         root_id: int = Query(ge=1),
         path: str = Query(min_length=1),
         start_sec: float = Query(default=0.0, ge=0.0),
+        segment_sec: float | None = Query(default=None, ge=1.0, le=900.0),
         width: int = Query(default=640, ge=160, le=1920),
         video_bitrate_kbps: int = Query(default=700, ge=180, le=4000),
         audio_bitrate_kbps: int = Query(default=96, ge=48, le=256),
@@ -462,6 +463,9 @@ def create_api_router() -> APIRouter:
             preview_active += 1
             active_now = preview_active
 
+        segment_value = float(segment_sec) if segment_sec is not None else float(preview_segment_sec)
+        segment_value = max(1.0, min(segment_value, float(preview_segment_sec)))
+
         ffmpeg_cmd = [
             ffmpeg,
             "-hide_banner",
@@ -474,7 +478,7 @@ def create_api_router() -> APIRouter:
             "-ss",
             f"{float(start_sec):.3f}",
             "-t",
-            f"{float(preview_segment_sec):.3f}",
+            f"{segment_value:.3f}",
             "-i",
             str(file_path),
             "-map",
@@ -519,7 +523,7 @@ def create_api_router() -> APIRouter:
             root_id,
             path,
             float(start_sec),
-            float(preview_segment_sec),
+            segment_value,
             width,
             video_bitrate_kbps,
             audio_bitrate_kbps,
