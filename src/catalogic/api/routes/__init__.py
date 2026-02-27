@@ -16,7 +16,7 @@ import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
 
@@ -82,12 +82,6 @@ def create_api_router() -> APIRouter:
             value = default
         return max(minimum, min(maximum, value))
 
-    preview_first_byte_timeout_sec = _clamp_float(
-        os.getenv("CATALOGIC_PREVIEW_FIRST_BYTE_TIMEOUT_SEC"),
-        8.0,
-        minimum=1.0,
-        maximum=30.0,
-    )
     preview_segment_sec = _clamp_float(
         os.getenv("CATALOGIC_PREVIEW_SEGMENT_SEC"),
         12.0,
@@ -100,15 +94,72 @@ def create_api_router() -> APIRouter:
         minimum=5.0,
         maximum=1800.0,
     )
+    preview_cache_ttl_sec = _clamp_float(
+        os.getenv("CATALOGIC_PREVIEW_CACHE_TTL_SEC"),
+        120.0,
+        minimum=5.0,
+        maximum=3600.0,
+    )
+    preview_cache_max_items = _clamp_int(
+        os.getenv("CATALOGIC_PREVIEW_CACHE_MAX_ITEMS"),
+        32,
+        minimum=2,
+        maximum=512,
+    )
     preview_slots = BoundedSemaphore(preview_max_procs)
     preview_active = 0
     preview_lock = Lock()
+    preview_cache: dict[str, dict[str, Any]] = {}
+    preview_cache_lock = Lock()
 
     def _cleanup_temp_file(path: str) -> None:
         try:
             Path(path).unlink(missing_ok=True)
         except OSError:
             pass
+
+    def _preview_cache_key(
+        *,
+        root_id: int,
+        path: str,
+        start_sec: float,
+        segment_sec: float,
+        width: int,
+        video_bitrate_kbps: int,
+        audio_bitrate_kbps: int,
+    ) -> str:
+        return (
+            f"{int(root_id)}|{path}|{float(start_sec):.3f}|{float(segment_sec):.3f}|"
+            f"{int(width)}|{int(video_bitrate_kbps)}|{int(audio_bitrate_kbps)}"
+        )
+
+    def _cleanup_preview_cache() -> None:
+        now = time.time()
+        to_remove: list[tuple[str, str]] = []
+        with preview_cache_lock:
+            for key, entry in list(preview_cache.items()):
+                cache_path = str(entry.get("path") or "")
+                expires_at = float(entry.get("expires_at") or 0.0)
+                if not cache_path:
+                    to_remove.append((key, cache_path))
+                    continue
+                if expires_at <= now or not Path(cache_path).exists():
+                    to_remove.append((key, cache_path))
+            for key, cache_path in to_remove:
+                preview_cache.pop(key, None)
+                if cache_path:
+                    _cleanup_temp_file(cache_path)
+            if len(preview_cache) > preview_cache_max_items:
+                overflow = len(preview_cache) - preview_cache_max_items
+                sorted_keys = sorted(
+                    preview_cache.keys(),
+                    key=lambda k: float(preview_cache[k].get("expires_at") or 0.0),
+                )
+                for key in sorted_keys[:overflow]:
+                    cache_path = str(preview_cache[key].get("path") or "")
+                    preview_cache.pop(key, None)
+                    if cache_path:
+                        _cleanup_temp_file(cache_path)
 
     def _resolve_inside_root(raw_path: str | None, browse_root: str) -> tuple[Path, Path]:
         root = Path(browse_root).expanduser().resolve()
@@ -442,7 +493,7 @@ def create_api_router() -> APIRouter:
         width: int = Query(default=640, ge=160, le=1920),
         video_bitrate_kbps: int = Query(default=700, ge=180, le=4000),
         audio_bitrate_kbps: int = Query(default=96, ge=48, le=256),
-    ) -> StreamingResponse:
+    ) -> FileResponse:
         started = time.perf_counter()
         file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
         if not _is_likely_video(file_path, mime):
@@ -451,6 +502,41 @@ def create_api_router() -> APIRouter:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise HTTPException(status_code=503, detail="ffmpeg is not available")
+
+        _cleanup_preview_cache()
+
+        segment_value = float(segment_sec) if segment_sec is not None else float(preview_segment_sec)
+        segment_value = max(1.0, min(segment_value, float(preview_segment_sec)))
+        cache_key = _preview_cache_key(
+            root_id=root_id,
+            path=path,
+            start_sec=float(start_sec),
+            segment_sec=segment_value,
+            width=int(width),
+            video_bitrate_kbps=int(video_bitrate_kbps),
+            audio_bitrate_kbps=int(audio_bitrate_kbps),
+        )
+        with preview_cache_lock:
+            cached = preview_cache.get(cache_key)
+            if cached:
+                cache_path = str(cached.get("path") or "")
+                if cache_path and Path(cache_path).exists():
+                    cached["expires_at"] = time.time() + float(preview_cache_ttl_sec)
+                    logger.info(
+                        "file.preview.video cache_hit root_id=%s path=%s start_sec=%.3f segment_sec=%.1f width=%s",
+                        root_id,
+                        path,
+                        float(start_sec),
+                        segment_value,
+                        width,
+                    )
+                    return FileResponse(
+                        path=cache_path,
+                        media_type="video/mp4",
+                        filename=f"{file_path.stem}_preview.mp4",
+                        content_disposition_type="inline",
+                        headers={"Cache-Control": "no-store"},
+                    )
 
         acquired = preview_slots.acquire(blocking=False)
         if not acquired:
@@ -462,9 +548,6 @@ def create_api_router() -> APIRouter:
         with preview_lock:
             preview_active += 1
             active_now = preview_active
-
-        segment_value = float(segment_sec) if segment_sec is not None else float(preview_segment_sec)
-        segment_value = max(1.0, min(segment_value, float(preview_segment_sec)))
 
         ffmpeg_cmd = [
             ffmpeg,
@@ -591,20 +674,23 @@ def create_api_router() -> APIRouter:
         with preview_lock:
             preview_active = max(0, preview_active - 1)
         preview_slots.release()
-
-        try:
-            payload = Path(tmp_path).read_bytes()
-        except OSError:
-            _cleanup_temp_file(tmp_path)
-            raise HTTPException(status_code=500, detail="Cannot read transcoded video preview")
-        _cleanup_temp_file(tmp_path)
-        return Response(
-            content=payload,
+        with preview_cache_lock:
+            previous = preview_cache.pop(cache_key, None)
+            if previous:
+                previous_path = str(previous.get("path") or "")
+                if previous_path and previous_path != tmp_path:
+                    _cleanup_temp_file(previous_path)
+            preview_cache[cache_key] = {
+                "path": tmp_path,
+                "expires_at": time.time() + float(preview_cache_ttl_sec),
+            }
+        _cleanup_preview_cache()
+        return FileResponse(
+            path=tmp_path,
             media_type="video/mp4",
-            headers={
-                "Cache-Control": "no-store",
-                "Content-Disposition": "inline",
-            },
+            filename=f"{file_path.stem}_preview.mp4",
+            content_disposition_type="inline",
+            headers={"Cache-Control": "no-store"},
         )
 
     @router.get("/file/preview/video/check")

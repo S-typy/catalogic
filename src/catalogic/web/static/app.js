@@ -2343,8 +2343,9 @@ function createFilePreviewNode(details) {
     const video = document.createElement("video");
     video.className = "file-preview-video";
     video.controls = true;
-    video.preload = "none";
+    video.preload = "metadata";
     video.playsInline = true;
+    video.muted = true;
     const note = document.createElement("div");
     note.className = "file-preview-note";
     note.textContent = t("file_preview_video_seek_hint");
@@ -2394,17 +2395,11 @@ function createFilePreviewNode(details) {
         })
         .then(() => {
           note.textContent = t("file_preview_video_seek_hint");
-          if (autoplay) {
-            video.addEventListener(
-              "loadedmetadata",
-              () => {
-                safeMediaPlay(video);
-              },
-              { once: true }
-            );
-          }
           video.src = buildTranscodedUrl(startSec);
           video.load();
+          if (autoplay) {
+            safeMediaPlay(video);
+          }
           video.addEventListener(
             "error",
             () => {
