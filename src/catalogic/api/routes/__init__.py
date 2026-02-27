@@ -466,6 +466,7 @@ def create_api_router() -> APIRouter:
             "-hide_banner",
             "-loglevel",
             "error",
+            "-y",
             "-nostdin",
             "-threads",
             str(preview_ffmpeg_threads),
