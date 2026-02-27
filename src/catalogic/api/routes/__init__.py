@@ -402,6 +402,7 @@ def create_api_router() -> APIRouter:
             path=str(file_path),
             media_type=media_type,
             filename=file_path.name,
+            content_disposition_type="inline",
             headers={"Cache-Control": "no-store"},
         )
 
@@ -428,6 +429,7 @@ def create_api_router() -> APIRouter:
             path=str(file_path),
             media_type=media_type,
             filename=file_path.name,
+            content_disposition_type="inline",
             headers={"Cache-Control": "no-store"},
         )
 
@@ -590,7 +592,7 @@ def create_api_router() -> APIRouter:
         return FileResponse(
             path=tmp_path,
             media_type="video/mp4",
-            filename=f"{file_path.stem}.preview.mp4",
+            content_disposition_type="inline",
             headers={"Cache-Control": "no-store"},
             background=BackgroundTask(_cleanup_temp_file, tmp_path),
         )
