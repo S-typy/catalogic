@@ -1674,9 +1674,9 @@ function buildVideoViewerPreviewUrl(rootId, path, startSec) {
     root_id: rootId,
     path,
     start_sec: Number.isFinite(startSec) ? Number(startSec).toFixed(3) : "0.000",
-    width: 960,
-    video_bitrate_kbps: 1800,
-    audio_bitrate_kbps: 128,
+    width: 640,
+    video_bitrate_kbps: 900,
+    audio_bitrate_kbps: 96,
   });
 }
 

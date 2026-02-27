@@ -19,7 +19,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
-from starlette.background import BackgroundTask
 
 from catalogic.app import (
     add_root,
@@ -589,12 +588,19 @@ def create_api_router() -> APIRouter:
             preview_active = max(0, preview_active - 1)
         preview_slots.release()
 
-        return FileResponse(
-            path=tmp_path,
+        try:
+            payload = Path(tmp_path).read_bytes()
+        except OSError:
+            _cleanup_temp_file(tmp_path)
+            raise HTTPException(status_code=500, detail="Cannot read transcoded video preview")
+        _cleanup_temp_file(tmp_path)
+        return Response(
+            content=payload,
             media_type="video/mp4",
-            content_disposition_type="inline",
-            headers={"Cache-Control": "no-store"},
-            background=BackgroundTask(_cleanup_temp_file, tmp_path),
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": "inline",
+            },
         )
 
     @router.get("/file/preview/video/check")
