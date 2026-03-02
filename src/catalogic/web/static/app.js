@@ -590,6 +590,140 @@ async function fetchVideoSegmentBlob(url, label, { signal } = {}) {
   return blob;
 }
 
+function buildAbortError(message = "Video load aborted") {
+  const err = new Error(message);
+  err.name = "AbortError";
+  return err;
+}
+
+function waitForMediaReady(media, token, { label = "video", timeoutMs = 9000 } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!media) {
+      reject(new Error("Video element is missing"));
+      return;
+    }
+
+    let done = false;
+    let timeoutId = null;
+    const handlers = [];
+    const safeTimeoutMs = Math.max(1500, Number(timeoutMs) || 9000);
+
+    const cleanup = () => {
+      handlers.forEach(([name, handler]) => {
+        media.removeEventListener(name, handler);
+      });
+      handlers.length = 0;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
+
+    const finishOk = (reason) => {
+      if (done) {
+        return;
+      }
+      done = true;
+      cleanup();
+      videoDebug(`${label}.ready`, {
+        reason,
+        ...snapshotMediaState(media),
+      });
+      resolve();
+    };
+
+    const finishErr = (error, reason) => {
+      if (done) {
+        return;
+      }
+      done = true;
+      cleanup();
+      const normalizedError =
+        error instanceof Error ? error : new Error(String(error || "Video load failed"));
+      videoDebug(`${label}.not_ready`, {
+        reason,
+        error: normalizedError.message || String(normalizedError),
+        ...snapshotMediaState(media),
+      });
+      reject(normalizedError);
+    };
+
+    const onReady = (reason) => {
+      if (!isVideoLoadActual(media, token)) {
+        finishErr(buildAbortError("Video load token superseded"), `stale-token:${reason}`);
+        return;
+      }
+      finishOk(reason);
+    };
+
+    const onMediaError = () => {
+      const mediaError = getMediaErrorDescription(media);
+      const message = mediaError
+        ? `${mediaError.name}${mediaError.message ? `: ${mediaError.message}` : ""}`
+        : "Unknown media error";
+      finishErr(new Error(message), "media-error");
+    };
+
+    const addHandler = (name, handler) => {
+      media.addEventListener(name, handler);
+      handlers.push([name, handler]);
+    };
+
+    addHandler("loadedmetadata", () => onReady("loadedmetadata"));
+    addHandler("canplay", () => onReady("canplay"));
+    addHandler("error", onMediaError);
+    addHandler("abort", () => finishErr(buildAbortError("Video load aborted"), "abort-event"));
+    addHandler("emptied", () => {
+      if (!isVideoLoadActual(media, token)) {
+        finishErr(buildAbortError("Video load replaced"), "emptied-stale");
+      }
+    });
+
+    timeoutId = window.setTimeout(() => {
+      if (!isVideoLoadActual(media, token)) {
+        finishErr(buildAbortError("Video load token superseded"), "timeout-stale");
+        return;
+      }
+      if (Number(media.readyState) >= 1) {
+        finishOk("timeout-readyState");
+        return;
+      }
+      finishErr(new Error("Timed out waiting for video metadata"), "timeout");
+    }, safeTimeoutMs);
+
+    if (Number(media.readyState) >= 1) {
+      finishOk("already-ready");
+    }
+  });
+}
+
+async function loadVideoDirectIntoElement(media, url, { autoplay = false, label = "video.direct" } = {}) {
+  if (!media) {
+    throw new Error("Video element is missing");
+  }
+  const token = beginVideoLoad(media);
+  abortVideoFetch(media, "replace-direct");
+  revokeVideoObjectUrl(media);
+  media.src = url;
+  media.load();
+  videoDebug(`${label}.source.applied`, {
+    token,
+    autoplay,
+    mode: "direct-url",
+    src: url,
+    ...snapshotMediaState(media),
+  });
+  if (autoplay) {
+    safeMediaPlay(media, (err) => {
+      videoDebug(`${label}.play.rejected`, {
+        error: err && err.message ? err.message : String(err || "unknown"),
+        ...snapshotMediaState(media),
+      });
+    });
+  }
+  await waitForMediaReady(media, token, { label, timeoutMs: 9000 });
+}
+
 async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = "video" } = {}) {
   if (!media) {
     throw new Error("Video element is missing");
@@ -637,6 +771,27 @@ async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = 
         ...snapshotMediaState(media),
       });
     });
+  }
+  try {
+    await waitForMediaReady(media, token, { label, timeoutMs: 9000 });
+  } catch (err) {
+    if (!isVideoLoadActual(media, token)) {
+      return;
+    }
+    videoDebug(`${label}.blob.ready_failed`, {
+      error: err && err.message ? err.message : String(err || "unknown"),
+      src: url,
+      ...snapshotMediaState(media),
+    });
+    if (typeof url === "string" && url) {
+      videoDebug(`${label}.blob.retry_direct`, { src: url });
+      await loadVideoDirectIntoElement(media, url, {
+        autoplay,
+        label: `${label}.direct`,
+      });
+      return;
+    }
+    throw err;
   }
 }
 
