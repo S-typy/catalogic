@@ -131,6 +131,7 @@ def create_api_router() -> APIRouter:
         *,
         root_id: int,
         path: str,
+        container_format: str,
         start_sec: float,
         segment_sec: float,
         width: int,
@@ -138,7 +139,7 @@ def create_api_router() -> APIRouter:
         audio_bitrate_kbps: int,
     ) -> str:
         return (
-            f"{int(root_id)}|{path}|{float(start_sec):.3f}|{float(segment_sec):.3f}|"
+            f"{int(root_id)}|{path}|{str(container_format)}|{float(start_sec):.3f}|{float(segment_sec):.3f}|"
             f"{int(width)}|{int(video_bitrate_kbps)}|{int(audio_bitrate_kbps)}"
         )
 
@@ -512,6 +513,7 @@ def create_api_router() -> APIRouter:
         width: int = Query(default=640, ge=160, le=1920),
         video_bitrate_kbps: int = Query(default=700, ge=180, le=4000),
         audio_bitrate_kbps: int = Query(default=96, ge=48, le=256),
+        container_format: Literal["mp4", "webm"] = Query(default="mp4", alias="format"),
     ) -> FileResponse:
         nonlocal preview_active
         started = time.perf_counter()
@@ -537,6 +539,7 @@ def create_api_router() -> APIRouter:
         cache_key = _preview_cache_key(
             root_id=root_id,
             path=path,
+            container_format=container_format,
             start_sec=float(start_sec),
             segment_sec=segment_value,
             width=int(width),
@@ -554,9 +557,10 @@ def create_api_router() -> APIRouter:
                     except OSError:
                         cache_size = None
                     logger.info(
-                        "file.preview.video cache_hit root_id=%s path=%s start_sec=%.3f segment_sec=%.1f width=%s cache_path=%s cache_size=%s range=%s ua=%s",
+                        "file.preview.video cache_hit root_id=%s path=%s format=%s start_sec=%.3f segment_sec=%.1f width=%s cache_path=%s cache_size=%s range=%s ua=%s",
                         root_id,
                         path,
+                        container_format,
                         float(start_sec),
                         segment_value,
                         width,
@@ -567,13 +571,13 @@ def create_api_router() -> APIRouter:
                     )
                     return FileResponse(
                         path=cache_path,
-                        media_type="video/mp4",
-                        filename=f"{file_path.stem}_preview.mp4",
+                        media_type="video/webm" if container_format == "webm" else "video/mp4",
+                        filename=f"{file_path.stem}_preview.{container_format}",
                         content_disposition_type="inline",
                         headers={
                             "Cache-Control": "no-store",
                             "Accept-Ranges": "bytes",
-                            "X-Catalogic-Video-Source": "preview-cache-hit",
+                            "X-Catalogic-Video-Source": f"preview-cache-hit:{container_format}",
                         },
                     )
 
@@ -598,7 +602,7 @@ def create_api_router() -> APIRouter:
             preview_active += 1
             active_now = preview_active
 
-        ffmpeg_cmd = [
+        ffmpeg_cmd: list[str] = [
             ffmpeg,
             "-hide_banner",
             "-loglevel",
@@ -621,39 +625,78 @@ def create_api_router() -> APIRouter:
             f"scale='min({int(width)},iw)':'-2':flags=lanczos",
             "-r",
             "24",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "33",
-            "-pix_fmt",
-            "yuv420p",
-            "-profile:v",
-            "main",
-            "-maxrate",
-            f"{int(video_bitrate_kbps)}k",
-            "-bufsize",
-            f"{int(video_bitrate_kbps) * 2}k",
-            "-g",
-            "48",
-            "-c:a",
-            "aac",
-            "-b:a",
-            f"{int(audio_bitrate_kbps)}k",
-            "-ac",
-            "2",
-            "-ar",
-            "44100",
-            "-movflags",
-            "+faststart",
-            "-f",
-            "mp4",
         ]
+        if container_format == "webm":
+            ffmpeg_cmd.extend(
+                [
+                    "-c:v",
+                    "libvpx",
+                    "-deadline",
+                    "realtime",
+                    "-cpu-used",
+                    "5",
+                    "-crf",
+                    "34",
+                    "-b:v",
+                    f"{int(video_bitrate_kbps)}k",
+                    "-maxrate",
+                    f"{int(video_bitrate_kbps)}k",
+                    "-bufsize",
+                    f"{int(video_bitrate_kbps) * 2}k",
+                    "-g",
+                    "96",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    f"{int(audio_bitrate_kbps)}k",
+                    "-ac",
+                    "2",
+                    "-ar",
+                    "48000",
+                    "-f",
+                    "webm",
+                ]
+            )
+        else:
+            ffmpeg_cmd.extend(
+                [
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "33",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-profile:v",
+                    "main",
+                    "-maxrate",
+                    f"{int(video_bitrate_kbps)}k",
+                    "-bufsize",
+                    f"{int(video_bitrate_kbps) * 2}k",
+                    "-g",
+                    "48",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    f"{int(audio_bitrate_kbps)}k",
+                    "-ac",
+                    "2",
+                    "-ar",
+                    "44100",
+                    "-movflags",
+                    "+faststart",
+                    "-f",
+                    "mp4",
+                ]
+            )
         logger.info(
-            "file.preview.video start root_id=%s path=%s source_size=%s source_mtime=%s start_sec=%.3f segment_sec=%.1f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s slot_wait_ms=%.1f range=%s if_range=%s ua=%s",
+            "file.preview.video start root_id=%s path=%s format=%s source_size=%s source_mtime=%s start_sec=%.3f segment_sec=%.1f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s slot_wait_ms=%.1f range=%s if_range=%s ua=%s",
             root_id,
             path,
+            container_format,
             source_size,
             source_mtime,
             float(start_sec),
@@ -675,7 +718,7 @@ def create_api_router() -> APIRouter:
 
         tmp_path: str | None = None
         try:
-            fd, raw_tmp_path = tempfile.mkstemp(prefix="catalogic_preview_", suffix=".mp4")
+            fd, raw_tmp_path = tempfile.mkstemp(prefix="catalogic_preview_", suffix=f".{container_format}")
             os.close(fd)
             tmp_path = raw_tmp_path
             ffmpeg_cmd.append(tmp_path)
@@ -749,9 +792,10 @@ def create_api_router() -> APIRouter:
                 except Exception as e:
                     probe_summary = f"ffprobe_error={e}"
         logger.info(
-            "file.preview.video done root_id=%s path=%s rc=%s out_path=%s out_bytes=%s elapsed_ms=%.1f probe=%s",
+            "file.preview.video done root_id=%s path=%s format=%s rc=%s out_path=%s out_bytes=%s elapsed_ms=%.1f probe=%s",
             root_id,
             path,
+            container_format,
             completed.returncode,
             tmp_path,
             out_size,
@@ -774,13 +818,13 @@ def create_api_router() -> APIRouter:
         _cleanup_preview_cache()
         return FileResponse(
             path=tmp_path,
-            media_type="video/mp4",
-            filename=f"{file_path.stem}_preview.mp4",
+            media_type="video/webm" if container_format == "webm" else "video/mp4",
+            filename=f"{file_path.stem}_preview.{container_format}",
             content_disposition_type="inline",
             headers={
                 "Cache-Control": "no-store",
                 "Accept-Ranges": "bytes",
-                "X-Catalogic-Video-Source": "preview-transcoded",
+                "X-Catalogic-Video-Source": f"preview-transcoded:{container_format}",
             },
         )
 
