@@ -93,6 +93,7 @@ RU:
   - `CATALOGIC_LOG_MAX_BYTES`, `CATALOGIC_LOG_BACKUP_COUNT`
   - `CATALOGIC_PREVIEW_MAX_PROCS` (макс. число параллельных ffmpeg preview процессов)
   - `CATALOGIC_PREVIEW_FFMPEG_THREADS` (число потоков на один ffmpeg preview процесс)
+  - `CATALOGIC_PREVIEW_SLOT_WAIT_SEC` (сколько секунд ждать свободный preview-слот перед `429`)
   - `CATALOGIC_PREVIEW_SEGMENT_SEC` (длина preview-сегмента в секундах)
   - `CATALOGIC_PREVIEW_TRANSCODE_TIMEOUT_SEC` (таймаут транскодирования preview)
   - `CATALOGIC_PREVIEW_CACHE_TTL_SEC`, `CATALOGIC_PREVIEW_CACHE_MAX_ITEMS` (TTL/лимит temp-кэша preview для корректной Range-отдачи)
@@ -108,6 +109,7 @@ EN:
   - `CATALOGIC_LOG_MAX_BYTES`, `CATALOGIC_LOG_BACKUP_COUNT`
   - `CATALOGIC_PREVIEW_MAX_PROCS` (max concurrent ffmpeg preview workers)
   - `CATALOGIC_PREVIEW_FFMPEG_THREADS` (threads per ffmpeg preview worker)
+  - `CATALOGIC_PREVIEW_SLOT_WAIT_SEC` (how many seconds to wait for a free preview slot before `429`)
   - `CATALOGIC_PREVIEW_SEGMENT_SEC` (preview segment duration, seconds)
   - `CATALOGIC_PREVIEW_TRANSCODE_TIMEOUT_SEC` (preview transcode timeout)
   - `CATALOGIC_PREVIEW_CACHE_TTL_SEC`, `CATALOGIC_PREVIEW_CACHE_MAX_ITEMS` (TTL/size for temp preview cache to support Range responses)

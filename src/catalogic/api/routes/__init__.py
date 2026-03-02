@@ -96,6 +96,12 @@ def create_api_router() -> APIRouter:
         minimum=5.0,
         maximum=1800.0,
     )
+    preview_slot_wait_sec = _clamp_float(
+        os.getenv("CATALOGIC_PREVIEW_SLOT_WAIT_SEC"),
+        20.0,
+        minimum=0.0,
+        maximum=300.0,
+    )
     preview_cache_ttl_sec = _clamp_float(
         os.getenv("CATALOGIC_PREVIEW_CACHE_TTL_SEC"),
         120.0,
@@ -507,6 +513,7 @@ def create_api_router() -> APIRouter:
         video_bitrate_kbps: int = Query(default=700, ge=180, le=4000),
         audio_bitrate_kbps: int = Query(default=96, ge=48, le=256),
     ) -> FileResponse:
+        nonlocal preview_active
         started = time.perf_counter()
         file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
         if not _is_likely_video(file_path, mime):
@@ -570,13 +577,23 @@ def create_api_router() -> APIRouter:
                         },
                     )
 
-        acquired = preview_slots.acquire(blocking=False)
+        slot_wait_started = time.perf_counter()
+        acquired = preview_slots.acquire(timeout=float(preview_slot_wait_sec))
+        slot_wait_ms = (time.perf_counter() - slot_wait_started) * 1000.0
         if not acquired:
+            logger.warning(
+                "file.preview.video slot_timeout root_id=%s path=%s waited_ms=%.1f active=%s limit=%s",
+                root_id,
+                path,
+                slot_wait_ms,
+                preview_active,
+                preview_max_procs,
+            )
             raise HTTPException(
                 status_code=429,
-                detail=f"Too many concurrent video preview requests (limit={preview_max_procs})",
+                detail=f"Video preview queue timeout (limit={preview_max_procs}, wait_sec={preview_slot_wait_sec})",
+                headers={"Retry-After": "2"},
             )
-        nonlocal preview_active
         with preview_lock:
             preview_active += 1
             active_now = preview_active
@@ -634,7 +651,7 @@ def create_api_router() -> APIRouter:
             "mp4",
         ]
         logger.info(
-            "file.preview.video start root_id=%s path=%s source_size=%s source_mtime=%s start_sec=%.3f segment_sec=%.1f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s range=%s if_range=%s ua=%s",
+            "file.preview.video start root_id=%s path=%s source_size=%s source_mtime=%s start_sec=%.3f segment_sec=%.1f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s slot_wait_ms=%.1f range=%s if_range=%s ua=%s",
             root_id,
             path,
             source_size,
@@ -648,6 +665,7 @@ def create_api_router() -> APIRouter:
             preview_ffmpeg_threads,
             active_now,
             preview_max_procs,
+            slot_wait_ms,
             request.headers.get("range") or "-",
             request.headers.get("if-range") or "-",
             request.headers.get("user-agent") or "-",

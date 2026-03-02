@@ -513,6 +513,25 @@ function revokeVideoObjectUrl(media) {
   media.__catalogicObjectUrl = null;
 }
 
+function abortVideoFetch(media, reason = "abort") {
+  if (!media) {
+    return;
+  }
+  const controller = media.__catalogicAbortController;
+  if (controller && typeof controller.abort === "function") {
+    try {
+      controller.abort();
+    } catch {
+      // noop
+    }
+    videoDebug("video.fetch.abort", {
+      reason,
+      src: media.currentSrc || media.src || "",
+    });
+  }
+  media.__catalogicAbortController = null;
+}
+
 function beginVideoLoad(media) {
   const next = Number(media.__catalogicLoadToken || 0) + 1;
   media.__catalogicLoadToken = next;
@@ -523,11 +542,12 @@ function isVideoLoadActual(media, token) {
   return Number(media.__catalogicLoadToken || 0) === Number(token || 0);
 }
 
-async function fetchVideoSegmentBlob(url, label) {
+async function fetchVideoSegmentBlob(url, label, { signal } = {}) {
   videoDebug(`${label}.fetch.start`, { url });
   const response = await fetch(url, {
     method: "GET",
     cache: "no-store",
+    signal,
   });
   const meta = {
     status: response.status,
@@ -562,7 +582,26 @@ async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = 
     throw new Error("Video element is missing");
   }
   const token = beginVideoLoad(media);
-  const blob = await fetchVideoSegmentBlob(url, label);
+  abortVideoFetch(media, "replace");
+  const controller = new AbortController();
+  media.__catalogicAbortController = controller;
+  let blob;
+  try {
+    blob = await fetchVideoSegmentBlob(url, label, { signal: controller.signal });
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      videoDebug(`${label}.fetch.aborted`, {
+        token,
+        current: media.__catalogicLoadToken,
+      });
+      return;
+    }
+    throw err;
+  } finally {
+    if (media.__catalogicAbortController === controller) {
+      media.__catalogicAbortController = null;
+    }
+  }
   if (!isVideoLoadActual(media, token)) {
     videoDebug(`${label}.fetch.stale`, { token, current: media.__catalogicLoadToken });
     return;
@@ -1610,6 +1649,7 @@ function stopInlineVideoPreviews() {
     } catch {
       // noop
     }
+    abortVideoFetch(node, "stop-inline-preview");
     revokeVideoObjectUrl(node);
     node.removeAttribute("src");
     node.load();
@@ -1882,6 +1922,7 @@ function closeVideoViewer() {
   player.onseeking = null;
   player.controls = false;
   player.style.transform = "";
+  abortVideoFetch(player, "close-viewer");
   revokeVideoObjectUrl(player);
   player.removeAttribute("src");
   player.load();
