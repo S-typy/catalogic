@@ -498,6 +498,96 @@ function bindMediaDebugEvents(media, label) {
   };
 }
 
+function revokeVideoObjectUrl(media) {
+  if (!media) {
+    return;
+  }
+  const objectUrl = media.__catalogicObjectUrl;
+  if (typeof objectUrl === "string" && objectUrl) {
+    try {
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      // noop
+    }
+  }
+  media.__catalogicObjectUrl = null;
+}
+
+function beginVideoLoad(media) {
+  const next = Number(media.__catalogicLoadToken || 0) + 1;
+  media.__catalogicLoadToken = next;
+  return next;
+}
+
+function isVideoLoadActual(media, token) {
+  return Number(media.__catalogicLoadToken || 0) === Number(token || 0);
+}
+
+async function fetchVideoSegmentBlob(url, label) {
+  videoDebug(`${label}.fetch.start`, { url });
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const meta = {
+    status: response.status,
+    ok: response.ok,
+    contentType: response.headers.get("content-type") || "-",
+    contentLength: response.headers.get("content-length") || "-",
+    contentRange: response.headers.get("content-range") || "-",
+    acceptRanges: response.headers.get("accept-ranges") || "-",
+    source: response.headers.get("x-catalogic-video-source") || "-",
+  };
+  videoDebug(`${label}.fetch.response`, meta);
+  if (!response.ok) {
+    let text = "";
+    try {
+      text = await response.text();
+    } catch {
+      // noop
+    }
+    throw new Error(extractApiErrorMessage(text) || `HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  videoDebug(`${label}.fetch.blob`, {
+    size: blob.size,
+    type: blob.type || "-",
+    ...meta,
+  });
+  return blob;
+}
+
+async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = "video" } = {}) {
+  if (!media) {
+    throw new Error("Video element is missing");
+  }
+  const token = beginVideoLoad(media);
+  const blob = await fetchVideoSegmentBlob(url, label);
+  if (!isVideoLoadActual(media, token)) {
+    videoDebug(`${label}.fetch.stale`, { token, current: media.__catalogicLoadToken });
+    return;
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  revokeVideoObjectUrl(media);
+  media.__catalogicObjectUrl = objectUrl;
+  media.src = objectUrl;
+  media.load();
+  videoDebug(`${label}.source.applied`, {
+    token,
+    objectUrl,
+    autoplay,
+    ...snapshotMediaState(media),
+  });
+  if (autoplay) {
+    safeMediaPlay(media, (err) => {
+      videoDebug(`${label}.play.rejected`, {
+        error: String(err || "unknown"),
+        ...snapshotMediaState(media),
+      });
+    });
+  }
+}
+
 function translateScanState(value) {
   const raw = String(value || "").toLowerCase();
   if (raw === "running") return t("scan_state_running");
@@ -1520,6 +1610,7 @@ function stopInlineVideoPreviews() {
     } catch {
       // noop
     }
+    revokeVideoObjectUrl(node);
     node.removeAttribute("src");
     node.load();
   });
@@ -1584,35 +1675,25 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
     videoViewerState.statusNote = t("video_viewer_status_error");
     updateVideoViewerStatus();
   });
-  player.src = buildVideoViewerPreviewUrl(videoViewerState.rootId, videoViewerState.path, startSec);
-  player.load();
-  player.addEventListener(
-    "loadedmetadata",
-    () => {
+  const reloadUrl = buildVideoViewerPreviewUrl(videoViewerState.rootId, videoViewerState.path, startSec);
+  loadVideoBlobIntoElement(player, reloadUrl, {
+    autoplay,
+    label: "viewer.fallback.restart",
+  })
+    .then(() => {
       clearVideoViewerOpenProbeTimer();
       videoViewerState.fallbackReloading = false;
-      if (autoplay) {
-        safeMediaPlay(player, (err) => {
-          videoDebug("viewer.play.rejected.reload", {
-            error: String(err || "unknown"),
-            ...snapshotMediaState(player),
-          });
-        });
-      }
       updateVideoViewerPlaybackControls();
-    },
-    { once: true }
-  );
-  player.addEventListener(
-    "error",
-    () => {
+    })
+    .catch((err) => {
       clearVideoViewerOpenProbeTimer();
       videoViewerState.fallbackReloading = false;
       videoViewerState.statusNote = t("video_viewer_status_error");
       updateVideoViewerStatus();
-    },
-    { once: true }
-  );
+      videoDebug("viewer.fallback.restart.failed", {
+        error: String(err && err.message ? err.message : err),
+      });
+    });
 }
 
 function renderVideoViewerTransform() {
@@ -1801,6 +1882,7 @@ function closeVideoViewer() {
   player.onseeking = null;
   player.controls = false;
   player.style.transform = "";
+  revokeVideoObjectUrl(player);
   player.removeAttribute("src");
   player.load();
   status.textContent = "";
@@ -1952,20 +2034,19 @@ function openVideoViewer(rootId, path, name, mime = "") {
       updateVideoViewerStatus();
       updateVideoViewerPlaybackControls();
     });
-    player.src = fallbackUrl;
-    player.load();
+    loadVideoBlobIntoElement(player, fallbackUrl, {
+      autoplay,
+      label: "viewer.fallback.init",
+    }).catch((err) => {
+      videoDebug("viewer.fallback.init.failed", {
+        error: String(err && err.message ? err.message : err),
+        src: fallbackUrl,
+      });
+    });
     videoDebug("viewer.fallback.activate", {
       autoplay,
       src: fallbackUrl,
     });
-    if (autoplay) {
-      safeMediaPlay(player, (err) => {
-        videoDebug("viewer.play.rejected", {
-          error: String(err || "unknown"),
-          ...snapshotMediaState(player),
-        });
-      });
-    }
     updateVideoViewerPlaybackControls();
   };
 
@@ -2535,23 +2616,21 @@ function createFilePreviewNode(details) {
       videoDebug("inline.restartFrom", { startSec, autoplay });
       reloadingBySeek = true;
       skipNextSeeking = true;
-      video.src = buildTranscodedUrl(startSec);
-      video.load();
-      const done = () => {
-        reloadingBySeek = false;
-        if (autoplay) {
-          safeMediaPlay(video, (err) => {
-            videoDebug("inline.play.rejected.restart", {
-              error: String(err || "unknown"),
-              ...snapshotMediaState(video),
-            });
+      const restartUrl = buildTranscodedUrl(startSec);
+      loadVideoBlobIntoElement(video, restartUrl, {
+        autoplay,
+        label: "inline.restart",
+      })
+        .then(() => {
+          reloadingBySeek = false;
+        })
+        .catch((err) => {
+          reloadingBySeek = false;
+          videoDebug("inline.restart.failed", {
+            error: String(err && err.message ? err.message : err),
+            src: restartUrl,
           });
-        }
-      };
-      video.addEventListener("loadedmetadata", done, { once: true });
-      video.addEventListener("error", () => {
-        reloadingBySeek = false;
-      }, { once: true });
+        });
     };
 
     const loadTranscodedPreview = (autoplay, startSec = 0) => {
@@ -2579,21 +2658,23 @@ function createFilePreviewNode(details) {
           };
           video.addEventListener("loadedmetadata", onReady, { once: true });
           video.addEventListener("canplay", onReady, { once: true });
-          video.src = buildTranscodedUrl(startSec);
-          video.load();
+          const previewUrl = buildTranscodedUrl(startSec);
           videoDebug("inline.preview.load", {
             autoplay,
             startSec,
-            src: video.src,
+            src: previewUrl,
           });
-          if (autoplay) {
-            safeMediaPlay(video, (err) => {
-              videoDebug("inline.play.rejected", {
-                error: String(err || "unknown"),
-                ...snapshotMediaState(video),
-              });
+          loadVideoBlobIntoElement(video, previewUrl, {
+            autoplay,
+            label: "inline.preview",
+          }).catch((err) => {
+            note.textContent = t("file_preview_failed");
+            note.classList.add("file-preview-error");
+            videoDebug("inline.preview.apply.failed", {
+              error: String(err && err.message ? err.message : err),
+              src: previewUrl,
             });
-          }
+          });
           video.addEventListener(
             "error",
             () => {
