@@ -8,6 +8,7 @@ import logging
 import mimetypes
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +31,7 @@ from catalogic.app import (
     list_tree_children,
     search_files,
 )
+from catalogic.api.request_context import extract_request_network_info
 
 logger = logging.getLogger("catalogic.api")
 
@@ -106,6 +108,7 @@ def create_api_router() -> APIRouter:
         minimum=2,
         maximum=512,
     )
+    video_debug_logs = str(os.getenv("CATALOGIC_VIDEO_DEBUG", "0")).strip().lower() in {"1", "true", "yes", "on"}
     preview_slots = BoundedSemaphore(preview_max_procs)
     preview_active = 0
     preview_lock = Lock()
@@ -467,20 +470,30 @@ def create_api_router() -> APIRouter:
         if not _is_likely_video(file_path, mime):
             raise HTTPException(status_code=415, detail="Video viewer is supported only for video files")
         media_type = _resolve_media_type(file_path, mime, "video/")
+        try:
+            source_size = file_path.stat().st_size
+        except OSError:
+            source_size = None
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         logger.info(
-            "file.view.video ok root_id=%s path=%s media_type=%s elapsed_ms=%.1f",
+            "file.view.video ok root_id=%s path=%s media_type=%s source_size=%s elapsed_ms=%.1f range=%s ua=%s",
             root_id,
             path,
             media_type,
+            source_size,
             elapsed_ms,
+            request.headers.get("range") or "-",
+            request.headers.get("user-agent") or "-",
         )
         return FileResponse(
             path=str(file_path),
             media_type=media_type,
             filename=file_path.name,
             content_disposition_type="inline",
-            headers={"Cache-Control": "no-store"},
+            headers={
+                "Cache-Control": "no-store",
+                "X-Catalogic-Video-Source": "native-file",
+            },
         )
 
     @router.get("/file/preview/video")
@@ -498,6 +511,13 @@ def create_api_router() -> APIRouter:
         file_path, mime = _resolve_scanned_file(request, root_id=root_id, path=path)
         if not _is_likely_video(file_path, mime):
             raise HTTPException(status_code=415, detail="Video preview is supported only for video files")
+        try:
+            source_stat = file_path.stat()
+            source_size = source_stat.st_size
+            source_mtime = source_stat.st_mtime
+        except OSError:
+            source_size = None
+            source_mtime = None
 
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
@@ -522,20 +542,32 @@ def create_api_router() -> APIRouter:
                 cache_path = str(cached.get("path") or "")
                 if cache_path and Path(cache_path).exists():
                     cached["expires_at"] = time.time() + float(preview_cache_ttl_sec)
+                    try:
+                        cache_size = Path(cache_path).stat().st_size
+                    except OSError:
+                        cache_size = None
                     logger.info(
-                        "file.preview.video cache_hit root_id=%s path=%s start_sec=%.3f segment_sec=%.1f width=%s",
+                        "file.preview.video cache_hit root_id=%s path=%s start_sec=%.3f segment_sec=%.1f width=%s cache_path=%s cache_size=%s range=%s ua=%s",
                         root_id,
                         path,
                         float(start_sec),
                         segment_value,
                         width,
+                        cache_path,
+                        cache_size,
+                        request.headers.get("range") or "-",
+                        request.headers.get("user-agent") or "-",
                     )
                     return FileResponse(
                         path=cache_path,
                         media_type="video/mp4",
                         filename=f"{file_path.stem}_preview.mp4",
                         content_disposition_type="inline",
-                        headers={"Cache-Control": "no-store"},
+                        headers={
+                            "Cache-Control": "no-store",
+                            "Accept-Ranges": "bytes",
+                            "X-Catalogic-Video-Source": "preview-cache-hit",
+                        },
                     )
 
         acquired = preview_slots.acquire(blocking=False)
@@ -602,9 +634,11 @@ def create_api_router() -> APIRouter:
             "mp4",
         ]
         logger.info(
-            "file.preview.video start root_id=%s path=%s start_sec=%.3f segment_sec=%.1f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s",
+            "file.preview.video start root_id=%s path=%s source_size=%s source_mtime=%s start_sec=%.3f segment_sec=%.1f width=%s v_bitrate=%sk a_bitrate=%sk ffmpeg=%s threads=%s active=%s limit=%s range=%s if_range=%s ua=%s",
             root_id,
             path,
+            source_size,
+            source_mtime,
             float(start_sec),
             segment_value,
             width,
@@ -614,7 +648,12 @@ def create_api_router() -> APIRouter:
             preview_ffmpeg_threads,
             active_now,
             preview_max_procs,
+            request.headers.get("range") or "-",
+            request.headers.get("if-range") or "-",
+            request.headers.get("user-agent") or "-",
         )
+        if video_debug_logs:
+            logger.info("file.preview.video ffmpeg_cmd=%s", " ".join(shlex.quote(part) for part in ffmpeg_cmd))
 
         tmp_path: str | None = None
         try:
@@ -663,13 +702,43 @@ def create_api_router() -> APIRouter:
 
         out_size = Path(tmp_path).stat().st_size
         elapsed_ms = (time.perf_counter() - started) * 1000.0
+        probe_summary = "-"
+        if video_debug_logs:
+            ffprobe = shutil.which("ffprobe")
+            if ffprobe:
+                probe_cmd = [
+                    ffprobe,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration,size:stream=index,codec_type,codec_name,width,height,avg_frame_rate",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=0",
+                    tmp_path,
+                ]
+                try:
+                    probe_run = subprocess.run(
+                        probe_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=5.0,
+                    )
+                    if probe_run.returncode == 0:
+                        probe_summary = " ".join((probe_run.stdout or "").strip().split())[:1400] or "-"
+                    else:
+                        probe_summary = f"ffprobe_rc={probe_run.returncode} stderr={((probe_run.stderr or '').strip()[:300] or '-')}"
+                except Exception as e:
+                    probe_summary = f"ffprobe_error={e}"
         logger.info(
-            "file.preview.video done root_id=%s path=%s rc=%s out_bytes=%s elapsed_ms=%.1f",
+            "file.preview.video done root_id=%s path=%s rc=%s out_path=%s out_bytes=%s elapsed_ms=%.1f probe=%s",
             root_id,
             path,
             completed.returncode,
+            tmp_path,
             out_size,
             elapsed_ms,
+            probe_summary,
         )
         with preview_lock:
             preview_active = max(0, preview_active - 1)
@@ -690,7 +759,11 @@ def create_api_router() -> APIRouter:
             media_type="video/mp4",
             filename=f"{file_path.stem}_preview.mp4",
             content_disposition_type="inline",
-            headers={"Cache-Control": "no-store"},
+            headers={
+                "Cache-Control": "no-store",
+                "Accept-Ranges": "bytes",
+                "X-Catalogic-Video-Source": "preview-transcoded",
+            },
         )
 
     @router.get("/file/preview/video/check")
@@ -705,7 +778,14 @@ def create_api_router() -> APIRouter:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise HTTPException(status_code=503, detail="ffmpeg is not available")
-        logger.info("file.preview.video.check ok root_id=%s path=%s ffmpeg=%s", root_id, path, ffmpeg)
+        logger.info(
+            "file.preview.video.check ok root_id=%s path=%s ffmpeg=%s range=%s ua=%s",
+            root_id,
+            path,
+            ffmpeg,
+            request.headers.get("range") or "-",
+            request.headers.get("user-agent") or "-",
+        )
         return {"ok": True, "ffmpeg": ffmpeg}
 
     @router.get("/search")
@@ -768,6 +848,12 @@ def create_api_router() -> APIRouter:
     @router.get("/state")
     def get_state(request: Request) -> dict[str, Any]:
         manager = request.app.state.scanner
-        return manager.diagnostics()
+        request_network = getattr(request.state, "network_info", None)
+        if not isinstance(request_network, dict):
+            request_network = extract_request_network_info(request)
+        return {
+            **manager.diagnostics(),
+            "request_network": request_network,
+        }
 
     return router

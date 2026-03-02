@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from catalogic.app import ScannerService
+from catalogic.api.request_context import extract_request_network_info
 from catalogic.api.routes import create_api_router
 from catalogic.logging_setup import reset_request_id, set_request_id
 from catalogic.storage import open_sqlite_storage
@@ -45,41 +46,88 @@ def create_app(*, db_path: str, frontend_port: int, browse_root: str = "/") -> F
         request_id = request.headers.get("X-Request-ID") or uuid4().hex[:12]
         token = set_request_id(request_id)
         started = time.perf_counter()
-        client_ip = request.client.host if request.client else "-"
+        network_info = extract_request_network_info(request)
+        request.state.network_info = network_info
+        client_ip = str(network_info.get("original_client_ip") or "-")
+        peer_ip = str(network_info.get("peer_ip") or "-")
+        proxy_ip = str(network_info.get("proxy_ip") or "-")
         query = request.url.query or "-"
+        path = request.url.path
+        is_video_request = path.startswith("/api/file/preview/video") or path.startswith("/api/file/view/video")
+        if is_video_request:
+            request_logger.info(
+                "video_http_in method=%s path=%s query=%s client=%s peer=%s proxy=%s range=%s if_range=%s ua=%s referer=%s sec_fetch_dest=%s accept=%s",
+                request.method,
+                path,
+                query,
+                client_ip,
+                peer_ip,
+                proxy_ip,
+                request.headers.get("range") or "-",
+                request.headers.get("if-range") or "-",
+                request.headers.get("user-agent") or "-",
+                request.headers.get("referer") or "-",
+                request.headers.get("sec-fetch-dest") or "-",
+                request.headers.get("accept") or "-",
+            )
         try:
             response = await call_next(request)
         except Exception:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             request_logger.exception(
-                "http_request_failed method=%s path=%s query=%s client=%s elapsed_ms=%.1f",
+                "http_request_failed method=%s path=%s query=%s client=%s peer=%s proxy=%s elapsed_ms=%.1f",
                 request.method,
                 request.url.path,
                 query,
                 client_ip,
+                peer_ip,
+                proxy_ip,
                 elapsed_ms,
             )
+            if is_video_request:
+                request_logger.exception(
+                    "video_http_failed method=%s path=%s query=%s range=%s",
+                    request.method,
+                    path,
+                    query,
+                    request.headers.get("range") or "-",
+                )
             raise
         else:
             response.headers["X-Request-ID"] = request_id
-            if request.url.path == "/" or request.url.path.startswith("/static/"):
+            if path == "/" or path.startswith("/static/"):
                 response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
                 response.headers["Pragma"] = "no-cache"
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            if request.url.path in {"/api/scan/status", "/api/scan/worker"} and response.status_code < 500:
+            if path in {"/api/scan/status", "/api/scan/worker"} and response.status_code < 500:
                 level = logging.DEBUG
             else:
                 level = logging.WARNING if response.status_code >= 500 else logging.INFO
             request_logger.log(
                 level,
-                "http_request method=%s path=%s query=%s status=%s client=%s elapsed_ms=%.1f",
+                "http_request method=%s path=%s query=%s status=%s client=%s peer=%s proxy=%s elapsed_ms=%.1f",
                 request.method,
                 request.url.path,
                 query,
                 response.status_code,
                 client_ip,
+                peer_ip,
+                proxy_ip,
                 elapsed_ms,
             )
+            if is_video_request:
+                request_logger.info(
+                    "video_http_out method=%s path=%s status=%s elapsed_ms=%.1f content_type=%s content_length=%s content_range=%s accept_ranges=%s source=%s",
+                    request.method,
+                    path,
+                    response.status_code,
+                    elapsed_ms,
+                    response.headers.get("content-type") or "-",
+                    response.headers.get("content-length") or "-",
+                    response.headers.get("content-range") or "-",
+                    response.headers.get("accept-ranges") or "-",
+                    response.headers.get("x-catalogic-video-source") or "-",
+                )
             return response
         finally:
             reset_request_id(token)

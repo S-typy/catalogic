@@ -85,6 +85,7 @@ EN: installer also runs `catalogic db migrate --db ...` automatically.
 
 RU:
 - В backend включено структурированное логирование запросов: method/path/status/latency/client и `X-Request-ID`.
+- В request-логах дополнительно выводятся `client`, `peer`, `proxy` (для диагностики reverse-proxy цепочки).
 - Параметры в `.env`:
   - `CATALOGIC_LOG_LEVEL` (`DEBUG|INFO|WARNING|ERROR`)
   - `CATALOGIC_LOG_JSON` (`0|1`)
@@ -95,9 +96,11 @@ RU:
   - `CATALOGIC_PREVIEW_SEGMENT_SEC` (длина preview-сегмента в секундах)
   - `CATALOGIC_PREVIEW_TRANSCODE_TIMEOUT_SEC` (таймаут транскодирования preview)
   - `CATALOGIC_PREVIEW_CACHE_TTL_SEC`, `CATALOGIC_PREVIEW_CACHE_MAX_ITEMS` (TTL/лимит temp-кэша preview для корректной Range-отдачи)
+  - `CATALOGIC_VIDEO_DEBUG` (`0|1`, расширенные video-логи: request headers, ffmpeg cmd, ffprobe summary)
 
 EN:
 - Backend now has structured request logging: method/path/status/latency/client and `X-Request-ID`.
+- Request logs also include `client`, `peer`, `proxy` (for reverse-proxy chain diagnostics).
 - Configure via `.env`:
   - `CATALOGIC_LOG_LEVEL` (`DEBUG|INFO|WARNING|ERROR`)
   - `CATALOGIC_LOG_JSON` (`0|1`)
@@ -108,6 +111,7 @@ EN:
   - `CATALOGIC_PREVIEW_SEGMENT_SEC` (preview segment duration, seconds)
   - `CATALOGIC_PREVIEW_TRANSCODE_TIMEOUT_SEC` (preview transcode timeout)
   - `CATALOGIC_PREVIEW_CACHE_TTL_SEC`, `CATALOGIC_PREVIEW_CACHE_MAX_ITEMS` (TTL/size for temp preview cache to support Range responses)
+  - `CATALOGIC_VIDEO_DEBUG` (`0|1`, extra video logs: request headers, ffmpeg cmd, ffprobe summary)
 
 ## Frontend Notes
 
@@ -116,6 +120,8 @@ RU:
 - Ограничение области выбора задаётся `CATALOGIC_BROWSE_ROOT` в `.env`.
 - Добавлен выбор языка интерфейса: `Русский / English`.
 - В статусе отображается текущий обрабатываемый файл.
+- Во вкладке `Состояние` добавлен блок `Сеть / Прокси` с параметрами текущего запроса (`proxy_ip`, `peer_ip`, `x_forwarded_for`, и др.).
+- Для клиентской video-диагностики откройте UI с `?video_debug=1` (или сохраните `localStorage.catalogic_video_debug=1`).
 - Можно открыть UI с `?lang=ru` или `?lang=en` для принудительного выбора языка.
 - При первом запуске (если язык ещё не сохранён) язык определяется по настройкам браузера.
 
@@ -124,6 +130,8 @@ EN:
 - Picker scope is limited by `CATALOGIC_BROWSE_ROOT` in `.env`.
 - UI language selector is available: `Russian / English`.
 - Current file being processed is shown in scanner status.
+- `State` tab now includes `Network / Proxy` section with current request network fields (`proxy_ip`, `peer_ip`, `x_forwarded_for`, etc.).
+- For client-side video diagnostics open UI with `?video_debug=1` (or set `localStorage.catalogic_video_debug=1`).
 - You can force UI language via `?lang=ru` or `?lang=en`.
 - On first launch (when no saved language exists), UI language is auto-detected from browser settings.
 

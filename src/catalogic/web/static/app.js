@@ -4,6 +4,7 @@ const LEFT_PANEL_WIDTH_STORAGE_KEY = "catalogic_tree_left_panel_width";
 const DETAILS_PANEL_WIDTH_STORAGE_KEY = "catalogic_tree_details_panel_width";
 const LANG_STORAGE_KEY = "catalogic_ui_language";
 const PREVIEW_AUTOSTART_STORAGE_KEY = "catalogic_preview_autostart";
+const VIDEO_DEBUG_STORAGE_KEY = "catalogic_video_debug";
 const VIDEO_VIEWER_PAN_START_DISTANCE = 5;
 const VIDEO_VIEWER_CONTROLS_ZONE_MIN_HEIGHT = 44;
 const VIDEO_VIEWER_CONTROLS_ZONE_MAX_HEIGHT = 78;
@@ -68,6 +69,7 @@ const I18N = {
     state_worker_process: "Процесс worker",
     state_metrics: "Метрики",
     state_utilities: "Утилиты",
+    state_network: "Сеть / Прокси",
     dups_title: "Поиск дубликатов (имя + размер)",
     dups_refresh_btn: "Обновить",
     delete_root_btn: "Удалить",
@@ -212,6 +214,7 @@ const I18N = {
     state_worker_process: "Worker process",
     state_metrics: "Metrics",
     state_utilities: "Utilities",
+    state_network: "Network / Proxy",
     dups_title: "Duplicate Search (name + size)",
     dups_refresh_btn: "Refresh",
     delete_root_btn: "Delete",
@@ -360,6 +363,7 @@ const videoViewerState = {
   fallbackUsed: false,
   fallbackReloading: false,
   fallbackSkipNextSeeking: false,
+  debugDetach: null,
 };
 
 function t(key, vars = {}) {
@@ -369,6 +373,129 @@ function t(key, vars = {}) {
     text = text.replaceAll(`{${name}}`, String(value));
   });
   return text;
+}
+
+function parseDebugFlag(raw) {
+  const value = String(raw || "").trim().toLowerCase();
+  if (!value) {
+    return null;
+  }
+  if (["1", "true", "yes", "on", "debug"].includes(value)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(value)) {
+    return false;
+  }
+  return null;
+}
+
+function resolveVideoDebugEnabled() {
+  try {
+    const queryValue = new URLSearchParams(window.location.search).get("video_debug");
+    const queryFlag = parseDebugFlag(queryValue);
+    if (queryFlag !== null) {
+      return queryFlag;
+    }
+  } catch {
+    // noop
+  }
+  try {
+    const storedFlag = parseDebugFlag(localStorage.getItem(VIDEO_DEBUG_STORAGE_KEY));
+    if (storedFlag !== null) {
+      return storedFlag;
+    }
+  } catch {
+    // noop
+  }
+  return true;
+}
+
+const VIDEO_DEBUG_ENABLED = resolveVideoDebugEnabled();
+
+function videoDebug(message, payload = null) {
+  if (!VIDEO_DEBUG_ENABLED) {
+    return;
+  }
+  if (payload === null || payload === undefined) {
+    console.info(`[catalogic-video] ${message}`);
+    return;
+  }
+  console.info(`[catalogic-video] ${message}`, payload);
+}
+
+function getMediaErrorDescription(media) {
+  const err = media && media.error;
+  if (!err) {
+    return null;
+  }
+  const code = Number(err.code);
+  const mapping = {
+    1: "MEDIA_ERR_ABORTED",
+    2: "MEDIA_ERR_NETWORK",
+    3: "MEDIA_ERR_DECODE",
+    4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+  };
+  return {
+    code,
+    name: mapping[code] || "UNKNOWN_MEDIA_ERROR",
+    message: err.message || null,
+  };
+}
+
+function snapshotMediaState(media) {
+  if (!media) {
+    return {};
+  }
+  return {
+    src: media.currentSrc || media.src || "",
+    networkState: media.networkState,
+    readyState: media.readyState,
+    paused: media.paused,
+    seeking: media.seeking,
+    currentTime: Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(3)) : null,
+    duration: Number.isFinite(media.duration) ? Number(media.duration.toFixed(3)) : null,
+    videoWidth: Number(media.videoWidth || 0),
+    videoHeight: Number(media.videoHeight || 0),
+    error: getMediaErrorDescription(media),
+  };
+}
+
+function bindMediaDebugEvents(media, label) {
+  if (!VIDEO_DEBUG_ENABLED || !media) {
+    return () => {};
+  }
+  const events = [
+    "loadstart",
+    "loadedmetadata",
+    "loadeddata",
+    "canplay",
+    "canplaythrough",
+    "play",
+    "playing",
+    "pause",
+    "seeking",
+    "seeked",
+    "waiting",
+    "stalled",
+    "suspend",
+    "ended",
+    "abort",
+    "emptied",
+    "error",
+  ];
+  const handlers = [];
+  events.forEach((eventName) => {
+    const handler = () => {
+      videoDebug(`${label}.${eventName}`, snapshotMediaState(media));
+    };
+    media.addEventListener(eventName, handler);
+    handlers.push([eventName, handler]);
+  });
+  return () => {
+    handlers.forEach(([eventName, handler]) => {
+      media.removeEventListener(eventName, handler);
+    });
+  };
 }
 
 function translateScanState(value) {
@@ -1441,6 +1568,12 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
   if (!Number.isFinite(videoViewerState.rootId) || !videoViewerState.path) {
     return;
   }
+  videoDebug("viewer.fallback.restart", {
+    startSec,
+    autoplay,
+    rootId: videoViewerState.rootId,
+    path: videoViewerState.path,
+  });
   videoViewerState.fallbackReloading = true;
   videoViewerState.fallbackSkipNextSeeking = true;
   armVideoViewerOpenProbeTimer(7000, () => {
@@ -1459,7 +1592,12 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
       clearVideoViewerOpenProbeTimer();
       videoViewerState.fallbackReloading = false;
       if (autoplay) {
-        safeMediaPlay(player);
+        safeMediaPlay(player, (err) => {
+          videoDebug("viewer.play.rejected.reload", {
+            error: String(err || "unknown"),
+            ...snapshotMediaState(player),
+          });
+        });
       }
       updateVideoViewerPlaybackControls();
     },
@@ -1626,6 +1764,7 @@ function closeVideoViewer() {
   if (!overlay || !player || !status) {
     return;
   }
+  const closingPath = videoViewerState.path;
   videoViewerState.open = false;
   videoViewerState.rootId = null;
   videoViewerState.path = null;
@@ -1645,6 +1784,11 @@ function closeVideoViewer() {
   videoViewerState.fallbackUsed = false;
   videoViewerState.fallbackReloading = false;
   videoViewerState.fallbackSkipNextSeeking = false;
+  if (typeof videoViewerState.debugDetach === "function") {
+    videoViewerState.debugDetach();
+  }
+  videoViewerState.debugDetach = null;
+  videoDebug("viewer.close", { path: closingPath });
   hideVideoViewerSelection();
   player.pause();
   player.onloadedmetadata = null;
@@ -1754,6 +1898,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
     closeImageViewer();
   }
   stopInlineVideoPreviews();
+  videoDebug("viewer.open.request", { rootId, path, name, mime });
   const overlay = $("video-viewer-overlay");
   const player = $("video-viewer-player");
   const status = $("video-viewer-status");
@@ -1778,6 +1923,10 @@ function openVideoViewer(rootId, path, name, mime = "") {
   videoViewerState.fallbackUsed = false;
   videoViewerState.fallbackReloading = false;
   videoViewerState.fallbackSkipNextSeeking = false;
+  if (typeof videoViewerState.debugDetach === "function") {
+    videoViewerState.debugDetach();
+  }
+  videoViewerState.debugDetach = bindMediaDebugEvents(player, "viewer.player");
   hideVideoViewerSelection();
   overlay.classList.remove("hidden");
   syncViewerBodyState();
@@ -1787,6 +1936,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
   player.title = name || path || "video";
 
   const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0);
+  videoDebug("viewer.fallback.url", { fallbackUrl });
   const activateFallback = (autoplay = false) => {
     if (!videoViewerState.open || videoViewerState.fallbackUsed) {
       return;
@@ -1804,8 +1954,17 @@ function openVideoViewer(rootId, path, name, mime = "") {
     });
     player.src = fallbackUrl;
     player.load();
+    videoDebug("viewer.fallback.activate", {
+      autoplay,
+      src: fallbackUrl,
+    });
     if (autoplay) {
-      safeMediaPlay(player);
+      safeMediaPlay(player, (err) => {
+        videoDebug("viewer.play.rejected", {
+          error: String(err || "unknown"),
+          ...snapshotMediaState(player),
+        });
+      });
     }
     updateVideoViewerPlaybackControls();
   };
@@ -1832,6 +1991,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
   player.ondurationchange = () => updateVideoViewerPlaybackControls();
   player.onended = () => updateVideoViewerPlaybackControls();
   player.onseeking = () => {
+    videoDebug("viewer.onseeking", snapshotMediaState(player));
     if (!videoViewerState.fallbackUsed || videoViewerState.fallbackReloading) {
       return;
     }
@@ -1846,6 +2006,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
     restartVideoViewerFallbackFrom(target, !player.paused);
   };
   player.onerror = () => {
+    videoDebug("viewer.onerror", snapshotMediaState(player));
     clearVideoViewerOpenProbeTimer();
     if (videoViewerState.fallbackReloading) {
       return;
@@ -2340,12 +2501,19 @@ function createFilePreviewNode(details) {
   }
 
   if (mime.startsWith("video/")) {
+    videoDebug("inline.create", {
+      rootId: details.root_id,
+      path: details.path,
+      mime,
+      previewAutostart,
+    });
     const video = document.createElement("video");
     video.className = "file-preview-video";
     video.controls = true;
-    video.preload = "metadata";
+    video.preload = "auto";
     video.playsInline = true;
     video.muted = true;
+    bindMediaDebugEvents(video, "inline.video");
     const note = document.createElement("div");
     note.className = "file-preview-note";
     note.textContent = t("file_preview_video_seek_hint");
@@ -2364,6 +2532,7 @@ function createFilePreviewNode(details) {
     let reloadingBySeek = false;
     let skipNextSeeking = false;
     const restartFrom = (startSec, autoplay) => {
+      videoDebug("inline.restartFrom", { startSec, autoplay });
       reloadingBySeek = true;
       skipNextSeeking = true;
       video.src = buildTranscodedUrl(startSec);
@@ -2371,7 +2540,12 @@ function createFilePreviewNode(details) {
       const done = () => {
         reloadingBySeek = false;
         if (autoplay) {
-          safeMediaPlay(video);
+          safeMediaPlay(video, (err) => {
+            videoDebug("inline.play.rejected.restart", {
+              error: String(err || "unknown"),
+              ...snapshotMediaState(video),
+            });
+          });
         }
       };
       video.addEventListener("loadedmetadata", done, { once: true });
@@ -2382,23 +2556,43 @@ function createFilePreviewNode(details) {
 
     const loadTranscodedPreview = (autoplay, startSec = 0) => {
       note.textContent = t("file_preview_loading");
+      note.classList.remove("file-preview-error");
       const checkUrl = buildApiUrl("/api/file/preview/video/check", {
         root_id: details.root_id,
         path: details.path,
       });
       fetch(checkUrl)
         .then(async (response) => {
+          videoDebug("inline.check.response", {
+            status: response.status,
+            ok: response.ok,
+            url: checkUrl,
+          });
           if (!response.ok) {
             const text = await response.text();
             throw new Error(extractApiErrorMessage(text) || `HTTP ${response.status}`);
           }
         })
         .then(() => {
-          note.textContent = t("file_preview_video_seek_hint");
+          const onReady = () => {
+            note.textContent = t("file_preview_video_seek_hint");
+          };
+          video.addEventListener("loadedmetadata", onReady, { once: true });
+          video.addEventListener("canplay", onReady, { once: true });
           video.src = buildTranscodedUrl(startSec);
           video.load();
+          videoDebug("inline.preview.load", {
+            autoplay,
+            startSec,
+            src: video.src,
+          });
           if (autoplay) {
-            safeMediaPlay(video);
+            safeMediaPlay(video, (err) => {
+              videoDebug("inline.play.rejected", {
+                error: String(err || "unknown"),
+                ...snapshotMediaState(video),
+              });
+            });
           }
           video.addEventListener(
             "error",
@@ -2410,6 +2604,10 @@ function createFilePreviewNode(details) {
           );
         })
         .catch((err) => {
+          videoDebug("inline.preview.failed", {
+            error: String(err && err.message ? err.message : err),
+            path: details.path,
+          });
           note.textContent = `${t("file_preview_failed")} ${extractApiErrorMessage(err.message)}`.trim();
           note.classList.add("file-preview-error");
         });
@@ -3181,6 +3379,10 @@ async function refreshState() {
   $("state-process").textContent = toPrettyJson(data.process || {});
   $("state-metrics").textContent = toPrettyJson(data.metrics || {});
   $("state-utils").textContent = toPrettyJson(data.utilities || {});
+  const stateNetwork = $("state-network");
+  if (stateNetwork) {
+    stateNetwork.textContent = toPrettyJson(data.request_network || {});
+  }
 }
 
 function bindActions() {
