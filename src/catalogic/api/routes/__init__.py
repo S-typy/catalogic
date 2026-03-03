@@ -513,7 +513,7 @@ def create_api_router() -> APIRouter:
         width: int = Query(default=640, ge=160, le=1920),
         video_bitrate_kbps: int = Query(default=700, ge=180, le=4000),
         audio_bitrate_kbps: int = Query(default=96, ge=48, le=256),
-        container_format: Literal["mp4", "webm"] = Query(default="mp4", alias="format"),
+        container_format: Literal["mp4", "webm", "ogg"] = Query(default="mp4", alias="format"),
     ) -> FileResponse:
         nonlocal preview_active
         started = time.perf_counter()
@@ -569,9 +569,12 @@ def create_api_router() -> APIRouter:
                         request.headers.get("range") or "-",
                         request.headers.get("user-agent") or "-",
                     )
+                    media_type = (
+                        "video/webm" if container_format == "webm" else ("video/ogg" if container_format == "ogg" else "video/mp4")
+                    )
                     return FileResponse(
                         path=cache_path,
-                        media_type="video/webm" if container_format == "webm" else "video/mp4",
+                        media_type=media_type,
                         filename=f"{file_path.stem}_preview.{container_format}",
                         content_disposition_type="inline",
                         headers={
@@ -657,6 +660,29 @@ def create_api_router() -> APIRouter:
                     "48000",
                     "-f",
                     "webm",
+                ]
+            )
+        elif container_format == "ogg":
+            ffmpeg_cmd.extend(
+                [
+                    "-c:v",
+                    "libtheora",
+                    "-q:v",
+                    "5",
+                    "-g",
+                    "48",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "libvorbis",
+                    "-q:a",
+                    "4",
+                    "-ac",
+                    "2",
+                    "-ar",
+                    "44100",
+                    "-f",
+                    "ogg",
                 ]
             )
         else:
@@ -816,9 +842,12 @@ def create_api_router() -> APIRouter:
                 "expires_at": time.time() + float(preview_cache_ttl_sec),
             }
         _cleanup_preview_cache()
+        media_type = (
+            "video/webm" if container_format == "webm" else ("video/ogg" if container_format == "ogg" else "video/mp4")
+        )
         return FileResponse(
             path=tmp_path,
-            media_type="video/webm" if container_format == "webm" else "video/mp4",
+            media_type=media_type,
             filename=f"{file_path.stem}_preview.{container_format}",
             content_disposition_type="inline",
             headers={

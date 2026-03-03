@@ -342,6 +342,7 @@ const videoViewerState = {
   rootId: null,
   path: null,
   previewFormat: "mp4",
+  previewFormats: ["mp4"],
   naturalWidth: 0,
   naturalHeight: 0,
   scale: 1,
@@ -509,6 +510,39 @@ function supportsWebmPreview(videoEl) {
   }
   const plain = String(videoEl.canPlayType("video/webm") || "").trim();
   return Boolean(plain);
+}
+
+function supportsOggPreview(videoEl) {
+  if (!videoEl || typeof videoEl.canPlayType !== "function") {
+    return false;
+  }
+  const withCodecs = String(videoEl.canPlayType('video/ogg; codecs="theora, vorbis"') || "").trim();
+  if (withCodecs) {
+    return true;
+  }
+  const plain = String(videoEl.canPlayType("video/ogg") || "").trim();
+  return Boolean(plain);
+}
+
+function buildPreviewFormatOrder(videoEl) {
+  const formats = [];
+  if (supportsWebmPreview(videoEl)) {
+    formats.push("webm");
+  }
+  formats.push("mp4");
+  if (supportsOggPreview(videoEl)) {
+    formats.push("ogg");
+  }
+  return Array.from(new Set(formats));
+}
+
+function nextPreviewFormat(current, order) {
+  const list = Array.isArray(order) ? order : [];
+  const idx = list.indexOf(current);
+  if (idx < 0 || idx >= list.length - 1) {
+    return null;
+  }
+  return list[idx + 1];
 }
 
 function supportsNativeVideoPlayback(videoEl, mime) {
@@ -1914,20 +1948,28 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
       updateVideoViewerPlaybackControls();
     })
     .catch((err) => {
-      if (videoViewerState.previewFormat === "webm" && videoViewerState.open) {
-        const mp4Url = buildVideoViewerPreviewUrl(videoViewerState.rootId, videoViewerState.path, startSec, "mp4");
-        videoDebug("viewer.fallback.restart.retry_mp4", {
-          error: String(err && err.message ? err.message : err),
-          src: mp4Url,
+      const fallbackFormat = nextPreviewFormat(videoViewerState.previewFormat, videoViewerState.previewFormats);
+      if (fallbackFormat && videoViewerState.open) {
+        const fallbackUrl = buildVideoViewerPreviewUrl(
+          videoViewerState.rootId,
+          videoViewerState.path,
+          startSec,
+          fallbackFormat
+        );
+        videoDebug("viewer.fallback.restart.retry_fallback", {
+          from: videoViewerState.previewFormat,
+          to: fallbackFormat,
+          failure: String(err && err.message ? err.message : err),
+          src: fallbackUrl,
         });
-        videoViewerState.previewFormat = "mp4";
-        loadVideoBlobIntoElement(player, mp4Url, {
+        videoViewerState.previewFormat = fallbackFormat;
+        loadVideoBlobIntoElement(player, fallbackUrl, {
           autoplay,
-          label: "viewer.fallback.restart.mp4",
+          label: `viewer.fallback.restart.${fallbackFormat}`,
         }).catch((retryErr) => {
-          videoDebug("viewer.fallback.restart.mp4.failed", {
-            error: String(retryErr && retryErr.message ? retryErr.message : retryErr),
-            src: mp4Url,
+          videoDebug(`viewer.fallback.restart.${fallbackFormat}.failed`, {
+            failure: String(retryErr && retryErr.message ? retryErr.message : retryErr),
+            src: fallbackUrl,
           });
         });
         return;
@@ -1937,7 +1979,7 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
       videoViewerState.statusNote = t("video_viewer_status_error");
       updateVideoViewerStatus();
       videoDebug("viewer.fallback.restart.failed", {
-        error: String(err && err.message ? err.message : err),
+        failure: String(err && err.message ? err.message : err),
       });
     });
 }
@@ -2096,6 +2138,7 @@ function closeVideoViewer() {
   videoViewerState.rootId = null;
   videoViewerState.path = null;
   videoViewerState.previewFormat = "mp4";
+  videoViewerState.previewFormats = ["mp4"];
   videoViewerState.naturalWidth = 0;
   videoViewerState.naturalHeight = 0;
   videoViewerState.scale = 1;
@@ -2273,7 +2316,8 @@ function openVideoViewer(rootId, path, name, mime = "") {
   updateVideoViewerPlaybackControls();
   player.controls = false;
   player.title = name || path || "video";
-  videoViewerState.previewFormat = supportsWebmPreview(player) ? "webm" : "mp4";
+  videoViewerState.previewFormats = buildPreviewFormatOrder(player);
+  videoViewerState.previewFormat = videoViewerState.previewFormats[0] || "mp4";
   const nativePlayable = supportsNativeVideoPlayback(player, mime);
   const nativeUrl = buildNativeVideoUrl(rootId, path);
   videoDebug("viewer.native.capabilities", {
@@ -2281,6 +2325,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
     nativePlayable,
     nativeUrl,
     previewFormat: videoViewerState.previewFormat,
+    previewFormats: videoViewerState.previewFormats,
   });
 
   const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0, videoViewerState.previewFormat);
@@ -2304,26 +2349,29 @@ function openVideoViewer(rootId, path, name, mime = "") {
       autoplay,
       label: "viewer.fallback.init",
     }).catch((err) => {
-      if (videoViewerState.previewFormat === "webm" && videoViewerState.open) {
-        const mp4Url = buildVideoViewerPreviewUrl(rootId, path, 0, "mp4");
-        videoDebug("viewer.fallback.init.retry_mp4", {
-          error: String(err && err.message ? err.message : err),
-          src: mp4Url,
+      const fallbackFormat = nextPreviewFormat(videoViewerState.previewFormat, videoViewerState.previewFormats);
+      if (fallbackFormat && videoViewerState.open) {
+        const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0, fallbackFormat);
+        videoDebug("viewer.fallback.init.retry_fallback", {
+          from: videoViewerState.previewFormat,
+          to: fallbackFormat,
+          failure: String(err && err.message ? err.message : err),
+          src: fallbackUrl,
         });
-        videoViewerState.previewFormat = "mp4";
-        loadVideoBlobIntoElement(player, mp4Url, {
+        videoViewerState.previewFormat = fallbackFormat;
+        loadVideoBlobIntoElement(player, fallbackUrl, {
           autoplay,
-          label: "viewer.fallback.init.mp4",
+          label: `viewer.fallback.init.${fallbackFormat}`,
         }).catch((retryErr) => {
-          videoDebug("viewer.fallback.init.mp4.failed", {
-            error: String(retryErr && retryErr.message ? retryErr.message : retryErr),
-            src: mp4Url,
+          videoDebug(`viewer.fallback.init.${fallbackFormat}.failed`, {
+            failure: String(retryErr && retryErr.message ? retryErr.message : retryErr),
+            src: fallbackUrl,
           });
         });
         return;
       }
       videoDebug("viewer.fallback.init.failed", {
-        error: String(err && err.message ? err.message : err),
+        failure: String(err && err.message ? err.message : err),
         src: fallbackUrl,
       });
     });
@@ -2891,7 +2939,13 @@ function createFilePreviewNode(details) {
     video.preload = "auto";
     video.playsInline = true;
     video.muted = true;
-    const preferredPreviewFormat = supportsWebmPreview(video) ? "webm" : "mp4";
+    const previewFormatOrder = buildPreviewFormatOrder(video);
+    const preferredPreviewFormat = previewFormatOrder[0] || "mp4";
+    videoDebug("inline.preview.formats", {
+      mime,
+      nativePlayable: supportsNativeVideoPlayback(video, mime),
+      previewFormatOrder,
+    });
     bindMediaDebugEvents(video, "inline.video");
     const note = document.createElement("div");
     note.className = "file-preview-note";
@@ -2927,9 +2981,10 @@ function createFilePreviewNode(details) {
           reloadingBySeek = false;
         })
         .catch((err) => {
-          if (containerFormat === "webm") {
-            activePreviewFormat = "mp4";
-            restartFrom(startSec, autoplay, "mp4");
+          const fallbackFormat = nextPreviewFormat(containerFormat, previewFormatOrder);
+          if (fallbackFormat) {
+            activePreviewFormat = fallbackFormat;
+            restartFrom(startSec, autoplay, fallbackFormat);
             return;
           }
           reloadingBySeek = false;
@@ -2981,32 +3036,35 @@ function createFilePreviewNode(details) {
               // Keep currently selected working format for subsequent seeks.
             })
             .catch((err) => {
-              if (activePreviewFormat === "webm") {
-              const mp4Url = buildTranscodedUrl(startSec, "mp4");
-              videoDebug("inline.preview.retry_mp4", {
-                error: String(err && err.message ? err.message : err),
-                src: mp4Url,
-              });
-              activePreviewFormat = "mp4";
-              loadVideoBlobIntoElement(video, mp4Url, {
-                autoplay,
-                label: "inline.preview.mp4",
-              }).catch((retryErr) => {
-                note.textContent = t("file_preview_failed");
-                note.classList.add("file-preview-error");
-                videoDebug("inline.preview.mp4.failed", {
-                  error: String(retryErr && retryErr.message ? retryErr.message : retryErr),
-                  src: mp4Url,
+              const fallbackFormat = nextPreviewFormat(activePreviewFormat, previewFormatOrder);
+              if (fallbackFormat) {
+                const fallbackUrl = buildTranscodedUrl(startSec, fallbackFormat);
+                videoDebug("inline.preview.retry_fallback", {
+                  from: activePreviewFormat,
+                  to: fallbackFormat,
+                  failure: String(err && err.message ? err.message : err),
+                  src: fallbackUrl,
                 });
+                activePreviewFormat = fallbackFormat;
+                loadVideoBlobIntoElement(video, fallbackUrl, {
+                  autoplay,
+                  label: `inline.preview.${fallbackFormat}`,
+                }).catch((retryErr) => {
+                  note.textContent = t("file_preview_failed");
+                  note.classList.add("file-preview-error");
+                  videoDebug(`inline.preview.${fallbackFormat}.failed`, {
+                    failure: String(retryErr && retryErr.message ? retryErr.message : retryErr),
+                    src: fallbackUrl,
+                  });
+                });
+                return;
+              }
+              note.textContent = t("file_preview_failed");
+              note.classList.add("file-preview-error");
+              videoDebug("inline.preview.apply.failed", {
+                failure: String(err && err.message ? err.message : err),
+                src: previewUrl,
               });
-              return;
-            }
-            note.textContent = t("file_preview_failed");
-            note.classList.add("file-preview-error");
-            videoDebug("inline.preview.apply.failed", {
-              error: String(err && err.message ? err.message : err),
-              src: previewUrl,
-            });
             });
           video.addEventListener(
             "error",
@@ -3019,7 +3077,7 @@ function createFilePreviewNode(details) {
         })
         .catch((err) => {
           videoDebug("inline.preview.failed", {
-            error: String(err && err.message ? err.message : err),
+            failure: String(err && err.message ? err.message : err),
             path: details.path,
           });
           note.textContent = `${t("file_preview_failed")} ${extractApiErrorMessage(err.message)}`.trim();
@@ -3080,7 +3138,9 @@ function createFilePreviewNode(details) {
       restartFrom(target, previewAutostart || !video.paused);
     });
 
-    loadPreview(true);
+    window.requestAnimationFrame(() => {
+      loadPreview(previewAutostart);
+    });
 
     container.appendChild(video);
     container.appendChild(note);
