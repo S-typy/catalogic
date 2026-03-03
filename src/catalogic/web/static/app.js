@@ -511,6 +511,17 @@ function supportsWebmPreview(videoEl) {
   return Boolean(plain);
 }
 
+function supportsNativeVideoPlayback(videoEl, mime) {
+  if (!videoEl || typeof videoEl.canPlayType !== "function") {
+    return false;
+  }
+  const normalizedMime = String(mime || "").trim().toLowerCase();
+  if (!normalizedMime || !isLikelyNativeBrowserVideoMime(normalizedMime)) {
+    return false;
+  }
+  return Boolean(String(videoEl.canPlayType(normalizedMime) || "").trim());
+}
+
 function revokeVideoObjectUrl(media) {
   if (!media) {
     return;
@@ -640,10 +651,11 @@ function waitForMediaReady(media, token, { label = "video", timeoutMs = 9000 } =
       cleanup();
       const normalizedError =
         error instanceof Error ? error : new Error(String(error || "Video load failed"));
+      const state = snapshotMediaState(media);
       videoDebug(`${label}.not_ready`, {
         reason,
-        error: normalizedError.message || String(normalizedError),
-        ...snapshotMediaState(media),
+        ...state,
+        failure: normalizedError.message || String(normalizedError),
       });
       reject(normalizedError);
     };
@@ -715,9 +727,10 @@ async function loadVideoDirectIntoElement(media, url, { autoplay = false, label 
   });
   if (autoplay) {
     safeMediaPlay(media, (err) => {
+      const state = snapshotMediaState(media);
       videoDebug(`${label}.play.rejected`, {
-        error: err && err.message ? err.message : String(err || "unknown"),
-        ...snapshotMediaState(media),
+        ...state,
+        failure: err && err.message ? err.message : String(err || "unknown"),
       });
     });
   }
@@ -766,9 +779,10 @@ async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = 
   });
   if (autoplay) {
     safeMediaPlay(media, (err) => {
+      const state = snapshotMediaState(media);
       videoDebug(`${label}.play.rejected`, {
-        error: String(err || "unknown"),
-        ...snapshotMediaState(media),
+        ...state,
+        failure: err && err.message ? err.message : String(err || "unknown"),
       });
     });
   }
@@ -778,10 +792,11 @@ async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = 
     if (!isVideoLoadActual(media, token)) {
       return;
     }
+    const state = snapshotMediaState(media);
     videoDebug(`${label}.blob.ready_failed`, {
-      error: err && err.message ? err.message : String(err || "unknown"),
+      ...state,
+      failure: err && err.message ? err.message : String(err || "unknown"),
       src: url,
-      ...snapshotMediaState(media),
     });
     if (typeof url === "string" && url) {
       videoDebug(`${label}.blob.retry_direct`, { src: url });
@@ -2141,6 +2156,14 @@ function buildVideoViewerPreviewUrl(rootId, path, startSec, containerFormat = "m
   });
 }
 
+function buildNativeVideoUrl(rootId, path) {
+  return buildApiUrl("/api/file/view/video", {
+    root_id: rootId,
+    path,
+    t: Date.now(),
+  });
+}
+
 function closeImageViewer() {
   const overlay = $("image-viewer-overlay");
   const img = $("image-viewer-img");
@@ -2251,6 +2274,14 @@ function openVideoViewer(rootId, path, name, mime = "") {
   player.controls = false;
   player.title = name || path || "video";
   videoViewerState.previewFormat = supportsWebmPreview(player) ? "webm" : "mp4";
+  const nativePlayable = supportsNativeVideoPlayback(player, mime);
+  const nativeUrl = buildNativeVideoUrl(rootId, path);
+  videoDebug("viewer.native.capabilities", {
+    mime,
+    nativePlayable,
+    nativeUrl,
+    previewFormat: videoViewerState.previewFormat,
+  });
 
   const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0, videoViewerState.previewFormat);
   videoDebug("viewer.fallback.url", { fallbackUrl, format: videoViewerState.previewFormat });
@@ -2353,7 +2384,20 @@ function openVideoViewer(rootId, path, name, mime = "") {
     updateVideoViewerStatus();
     updateVideoViewerPlaybackControls();
   };
-  activateFallback(true);
+  if (nativePlayable) {
+    loadVideoDirectIntoElement(player, nativeUrl, {
+      autoplay: true,
+      label: "viewer.native",
+    }).catch((err) => {
+      videoDebug("viewer.native.failed", {
+        failure: err && err.message ? err.message : String(err || "unknown"),
+        src: nativeUrl,
+      });
+      activateFallback(true);
+    });
+  } else {
+    activateFallback(true);
+  }
   updateVideoViewerPlaybackControls();
 }
 
@@ -2852,7 +2896,8 @@ function createFilePreviewNode(details) {
     const note = document.createElement("div");
     note.className = "file-preview-note";
     note.textContent = t("file_preview_video_seek_hint");
-    const useTranscodedPreview = true;
+    const nativePlayable = supportsNativeVideoPlayback(video, mime);
+    let useTranscodedPreview = true;
     let activePreviewFormat = preferredPreviewFormat;
 
     const buildTranscodedUrl = (startSec, containerFormat = preferredPreviewFormat) =>
@@ -2896,6 +2941,7 @@ function createFilePreviewNode(details) {
     };
 
     const loadTranscodedPreview = (autoplay, startSec = 0) => {
+      useTranscodedPreview = true;
       note.textContent = t("file_preview_loading");
       note.classList.remove("file-preview-error");
       const checkUrl = buildApiUrl("/api/file/preview/video/check", {
@@ -2981,7 +3027,38 @@ function createFilePreviewNode(details) {
         });
     };
 
+    const loadNativePreview = (autoplay) => {
+      useTranscodedPreview = false;
+      note.textContent = t("file_preview_loading");
+      note.classList.remove("file-preview-error");
+      const nativeUrl = buildNativeVideoUrl(details.root_id, details.path);
+      videoDebug("inline.native.load", {
+        autoplay,
+        src: nativeUrl,
+        mime,
+      });
+      loadVideoDirectIntoElement(video, nativeUrl, {
+        autoplay,
+        label: "inline.native",
+      })
+        .then(() => {
+          note.textContent = t("file_preview_video_seek_hint");
+        })
+        .catch((err) => {
+          videoDebug("inline.native.failed", {
+            failure: err && err.message ? err.message : String(err || "unknown"),
+            src: nativeUrl,
+          });
+          activePreviewFormat = preferredPreviewFormat;
+          loadTranscodedPreview(autoplay, 0);
+        });
+    };
+
     const loadPreview = (autoplay) => {
+      if (nativePlayable) {
+        loadNativePreview(autoplay);
+        return;
+      }
       loadTranscodedPreview(autoplay);
     };
 
