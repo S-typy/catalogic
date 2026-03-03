@@ -307,6 +307,7 @@ const I18N = {
 let pickerCurrentPath = null;
 const treeCache = new Map();
 const fileDetailsCache = new Map();
+const videoPlaybackPlanCache = new Map();
 let selectedDirKey = null;
 let selectedDirContext = null;
 let selectedRowPath = null;
@@ -413,6 +414,52 @@ function resolveVideoDebugEnabled() {
 }
 
 const VIDEO_DEBUG_ENABLED = resolveVideoDebugEnabled();
+
+function parsePositiveInt(value) {
+  const num = Number.parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isFinite(num) || num <= 0) {
+    return null;
+  }
+  return num;
+}
+
+function resolveVideoTimingMs(queryKey, storageKey, defaultValue, minimum = 1000, maximum = 120000) {
+  const clamp = (value) => Math.min(Math.max(value, minimum), maximum);
+  try {
+    const queryValue = new URLSearchParams(window.location.search).get(queryKey);
+    const parsed = parsePositiveInt(queryValue);
+    if (parsed !== null) {
+      return clamp(parsed);
+    }
+  } catch {
+    // noop
+  }
+  try {
+    const stored = parsePositiveInt(window.localStorage.getItem(storageKey));
+    if (stored !== null) {
+      return clamp(stored);
+    }
+  } catch {
+    // noop
+  }
+  return clamp(defaultValue);
+}
+
+const VIDEO_READY_TIMEOUT_NATIVE_MS = resolveVideoTimingMs(
+  "video_native_timeout_ms",
+  "catalogic_video_native_timeout_ms",
+  18000
+);
+const VIDEO_READY_TIMEOUT_PREVIEW_DIRECT_MS = resolveVideoTimingMs(
+  "video_preview_direct_timeout_ms",
+  "catalogic_video_preview_direct_timeout_ms",
+  18000
+);
+const VIDEO_READY_TIMEOUT_PREVIEW_BLOB_MS = resolveVideoTimingMs(
+  "video_preview_blob_timeout_ms",
+  "catalogic_video_preview_blob_timeout_ms",
+  26000
+);
 
 function videoDebug(message, payload = null) {
   if (!VIDEO_DEBUG_ENABLED) {
@@ -554,6 +601,343 @@ function supportsNativeVideoPlayback(videoEl, mime) {
     return false;
   }
   return Boolean(String(videoEl.canPlayType(normalizedMime) || "").trim());
+}
+
+function normalizeCodecToken(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function mapVideoCodecToMimeCodec(codec) {
+  const token = normalizeCodecToken(codec);
+  if (!token) {
+    return "";
+  }
+  if (["h264", "avc", "avc1"].includes(token)) {
+    return "avc1.42E01E";
+  }
+  if (["h265", "hevc", "hev1", "hvc1"].includes(token)) {
+    return "hev1.1.6.L120.90";
+  }
+  if (token === "vp8") {
+    return "vp8";
+  }
+  if (token === "vp9") {
+    return "vp9";
+  }
+  if (token === "av1") {
+    return "av01.0.05M.08";
+  }
+  if (token === "theora") {
+    return "theora";
+  }
+  if (["mpeg4", "mpeg-4", "mp4v"].includes(token)) {
+    return "mp4v.20.8";
+  }
+  return "";
+}
+
+function mapAudioCodecToMimeCodec(codec) {
+  const token = normalizeCodecToken(codec);
+  if (!token) {
+    return "";
+  }
+  if (token === "aac") {
+    return "mp4a.40.2";
+  }
+  if (["mp3", "mpeg3", "mpeg-3"].includes(token)) {
+    return "mp3";
+  }
+  if (token === "opus") {
+    return "opus";
+  }
+  if (token === "vorbis") {
+    return "vorbis";
+  }
+  if (token === "flac") {
+    return "flac";
+  }
+  if (token === "ac3") {
+    return "ac-3";
+  }
+  if (token === "eac3") {
+    return "ec-3";
+  }
+  return "";
+}
+
+function normalizeMediaMime(mime) {
+  return String(mime || "").trim().toLowerCase();
+}
+
+function toFinitePositiveNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    return null;
+  }
+  return num;
+}
+
+function buildNativeVideoContentType(mime, videoMeta, audioMeta) {
+  const normalizedMime = normalizeMediaMime(mime);
+  if (!normalizedMime.startsWith("video/")) {
+    return "";
+  }
+  const codecs = [];
+  const videoCodec = mapVideoCodecToMimeCodec(videoMeta && videoMeta.video_codec);
+  if (videoCodec) {
+    codecs.push(videoCodec);
+  }
+  const audioCodec = mapAudioCodecToMimeCodec(
+    (videoMeta && videoMeta.audio_codec) || (audioMeta && audioMeta.codec)
+  );
+  if (audioCodec) {
+    codecs.push(audioCodec);
+  }
+  if (!codecs.length) {
+    return normalizedMime;
+  }
+  return `${normalizedMime}; codecs="${codecs.join(", ")}"`;
+}
+
+function buildNativeAudioContentType(mime, videoMeta, audioMeta) {
+  const audioCodec = mapAudioCodecToMimeCodec(
+    (videoMeta && videoMeta.audio_codec) || (audioMeta && audioMeta.codec)
+  );
+  if (!audioCodec) {
+    return "";
+  }
+  const normalizedMime = normalizeMediaMime(mime);
+  if (normalizedMime === "video/webm") {
+    return `audio/webm; codecs="${audioCodec}"`;
+  }
+  if (normalizedMime === "video/ogg") {
+    return `audio/ogg; codecs="${audioCodec}"`;
+  }
+  return `audio/mp4; codecs="${audioCodec}"`;
+}
+
+function hasMediaCapabilitiesApi() {
+  return Boolean(
+    navigator &&
+      navigator.mediaCapabilities &&
+      typeof navigator.mediaCapabilities.decodingInfo === "function"
+  );
+}
+
+async function probeDecodingInfo(label, config) {
+  if (!hasMediaCapabilitiesApi() || !config) {
+    return null;
+  }
+  try {
+    const result = await navigator.mediaCapabilities.decodingInfo(config);
+    videoDebug(`${label}.decodingInfo`, {
+      supported: Boolean(result && result.supported),
+      smooth: Boolean(result && result.smooth),
+      powerEfficient: Boolean(result && result.powerEfficient),
+      config,
+    });
+    return result;
+  } catch (err) {
+    videoDebug(`${label}.decodingInfo.error`, {
+      failure: err && err.message ? err.message : String(err || "unknown"),
+      config,
+    });
+    return null;
+  }
+}
+
+function buildNativeDecodingConfig(mime, videoMeta, audioMeta) {
+  const videoContentType = buildNativeVideoContentType(mime, videoMeta, audioMeta);
+  if (!videoContentType) {
+    return null;
+  }
+  const width = toFinitePositiveNumber(videoMeta && videoMeta.width) || 640;
+  const height = toFinitePositiveNumber(videoMeta && videoMeta.height) || 360;
+  const bitrate =
+    toFinitePositiveNumber(videoMeta && videoMeta.video_bitrate_bps) ||
+    toFinitePositiveNumber(videoMeta && videoMeta.audio_bitrate_bps) ||
+    900000;
+  const framerate = toFinitePositiveNumber(videoMeta && videoMeta.fps) || 24;
+  const config = {
+    type: "file",
+    video: {
+      contentType: videoContentType,
+      width: Math.max(16, Math.round(width)),
+      height: Math.max(16, Math.round(height)),
+      bitrate: Math.max(32000, Math.round(bitrate)),
+      framerate: Math.max(1, Number(framerate)),
+    },
+  };
+  const audioContentType = buildNativeAudioContentType(mime, videoMeta, audioMeta);
+  if (audioContentType) {
+    const channels =
+      toFinitePositiveNumber(videoMeta && videoMeta.audio_channels) ||
+      toFinitePositiveNumber(audioMeta && audioMeta.channels) ||
+      2;
+    const samplerate =
+      toFinitePositiveNumber(videoMeta && videoMeta.audio_sample_rate_hz) ||
+      toFinitePositiveNumber(audioMeta && audioMeta.sample_rate_hz) ||
+      44100;
+    const audioBitrate =
+      toFinitePositiveNumber(videoMeta && videoMeta.audio_bitrate_bps) ||
+      toFinitePositiveNumber(audioMeta && audioMeta.bitrate_bps) ||
+      96000;
+    config.audio = {
+      contentType: audioContentType,
+      channels: String(Math.max(1, Math.round(channels))),
+      bitrate: Math.max(16000, Math.round(audioBitrate)),
+      samplerate: Math.max(8000, Math.round(samplerate)),
+    };
+  }
+  return config;
+}
+
+function buildPreviewDecodingConfig(format) {
+  const raw = String(format || "").trim().toLowerCase();
+  if (raw === "webm") {
+    return {
+      type: "file",
+      video: {
+        contentType: 'video/webm; codecs="vp8, opus"',
+        width: 640,
+        height: 360,
+        bitrate: 900000,
+        framerate: 24,
+      },
+      audio: {
+        contentType: 'audio/webm; codecs="opus"',
+        channels: "2",
+        bitrate: 96000,
+        samplerate: 48000,
+      },
+    };
+  }
+  if (raw === "ogg") {
+    return {
+      type: "file",
+      video: {
+        contentType: 'video/ogg; codecs="theora, vorbis"',
+        width: 640,
+        height: 360,
+        bitrate: 900000,
+        framerate: 24,
+      },
+      audio: {
+        contentType: 'audio/ogg; codecs="vorbis"',
+        channels: "2",
+        bitrate: 96000,
+        samplerate: 44100,
+      },
+    };
+  }
+  if (raw === "mp4") {
+    return {
+      type: "file",
+      video: {
+        contentType: 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+        width: 640,
+        height: 360,
+        bitrate: 900000,
+        framerate: 24,
+      },
+      audio: {
+        contentType: 'audio/mp4; codecs="mp4a.40.2"',
+        channels: "2",
+        bitrate: 96000,
+        samplerate: 44100,
+      },
+    };
+  }
+  return null;
+}
+
+function buildPlaybackPlanCacheKey(mime, videoMeta, audioMeta) {
+  const safe = (value) => String(value || "");
+  const vm = videoMeta || {};
+  const am = audioMeta || {};
+  return [
+    normalizeMediaMime(mime),
+    safe(vm.video_codec),
+    safe(vm.audio_codec),
+    safe(vm.width),
+    safe(vm.height),
+    safe(vm.video_bitrate_bps),
+    safe(vm.audio_bitrate_bps),
+    safe(vm.fps),
+    safe(am.codec),
+    safe(am.channels),
+    safe(am.sample_rate_hz),
+  ].join("|");
+}
+
+async function resolvePlaybackPlan(videoEl, { mime = "", videoMeta = null, audioMeta = null, label = "video" } = {}) {
+  const fallbackOrder = buildPreviewFormatOrder(videoEl);
+  const fallbackPlan = {
+    nativePlayable: supportsNativeVideoPlayback(videoEl, mime),
+    previewFormatOrder: fallbackOrder,
+    source: "canPlayType",
+  };
+  if (!hasMediaCapabilitiesApi()) {
+    return fallbackPlan;
+  }
+
+  const cacheKey = buildPlaybackPlanCacheKey(mime, videoMeta, audioMeta);
+  const cached = videoPlaybackPlanCache.get(cacheKey);
+  if (cached) {
+    return {
+      nativePlayable: Boolean(cached.nativePlayable),
+      previewFormatOrder: Array.isArray(cached.previewFormatOrder) ? [...cached.previewFormatOrder] : fallbackOrder,
+      source: "cache",
+    };
+  }
+
+  let nativePlayable = fallbackPlan.nativePlayable;
+  const nativeConfig = buildNativeDecodingConfig(mime, videoMeta, audioMeta);
+  if (nativePlayable && nativeConfig) {
+    const nativeProbe = await probeDecodingInfo(`${label}.native`, nativeConfig);
+    if (nativeProbe && (!nativeProbe.supported || nativeProbe.smooth === false)) {
+      nativePlayable = false;
+    }
+  }
+
+  const ranked = [];
+  for (let idx = 0; idx < fallbackOrder.length; idx += 1) {
+    const format = fallbackOrder[idx];
+    const config = buildPreviewDecodingConfig(format);
+    const probe = await probeDecodingInfo(`${label}.preview.${format}`, config);
+    if (probe && !probe.supported) {
+      continue;
+    }
+    let score = 100 - idx;
+    if (probe) {
+      if (probe.supported) {
+        score += 20;
+      }
+      if (probe.smooth) {
+        score += 10;
+      } else if (probe.smooth === false) {
+        score -= 15;
+      }
+      if (probe.powerEfficient) {
+        score += 2;
+      }
+    }
+    ranked.push({ format, score });
+  }
+
+  const previewFormatOrder = ranked.length
+    ? ranked.sort((a, b) => b.score - a.score).map((item) => item.format)
+    : fallbackOrder;
+
+  const plan = {
+    nativePlayable,
+    previewFormatOrder: previewFormatOrder.length ? previewFormatOrder : fallbackOrder,
+  };
+  videoPlaybackPlanCache.set(cacheKey, plan);
+  return {
+    ...plan,
+    source: "mediaCapabilities",
+  };
 }
 
 function revokeVideoObjectUrl(media) {
@@ -743,7 +1127,11 @@ function waitForMediaReady(media, token, { label = "video", timeoutMs = 9000 } =
   });
 }
 
-async function loadVideoDirectIntoElement(media, url, { autoplay = false, label = "video.direct" } = {}) {
+async function loadVideoDirectIntoElement(
+  media,
+  url,
+  { autoplay = false, label = "video.direct", readyTimeoutMs = VIDEO_READY_TIMEOUT_NATIVE_MS } = {}
+) {
   if (!media) {
     throw new Error("Video element is missing");
   }
@@ -768,10 +1156,19 @@ async function loadVideoDirectIntoElement(media, url, { autoplay = false, label 
       });
     });
   }
-  await waitForMediaReady(media, token, { label, timeoutMs: 9000 });
+  await waitForMediaReady(media, token, { label, timeoutMs: readyTimeoutMs });
 }
 
-async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = "video" } = {}) {
+async function loadVideoBlobIntoElement(
+  media,
+  url,
+  {
+    autoplay = false,
+    label = "video",
+    readyTimeoutMs = VIDEO_READY_TIMEOUT_PREVIEW_BLOB_MS,
+    enableDirectRetry = true,
+  } = {}
+) {
   if (!media) {
     throw new Error("Video element is missing");
   }
@@ -821,7 +1218,7 @@ async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = 
     });
   }
   try {
-    await waitForMediaReady(media, token, { label, timeoutMs: 9000 });
+    await waitForMediaReady(media, token, { label, timeoutMs: readyTimeoutMs });
   } catch (err) {
     if (!isVideoLoadActual(media, token)) {
       return;
@@ -832,16 +1229,49 @@ async function loadVideoBlobIntoElement(media, url, { autoplay = false, label = 
       failure: err && err.message ? err.message : String(err || "unknown"),
       src: url,
     });
-    if (typeof url === "string" && url) {
+    if (enableDirectRetry && typeof url === "string" && url) {
       videoDebug(`${label}.blob.retry_direct`, { src: url });
       await loadVideoDirectIntoElement(media, url, {
         autoplay,
         label: `${label}.direct`,
+        readyTimeoutMs,
       });
       return;
     }
     throw err;
   }
+}
+
+async function loadVideoPreviewIntoElement(
+  media,
+  url,
+  {
+    autoplay = false,
+    label = "video.preview",
+    directTimeoutMs = VIDEO_READY_TIMEOUT_PREVIEW_DIRECT_MS,
+    blobTimeoutMs = VIDEO_READY_TIMEOUT_PREVIEW_BLOB_MS,
+  } = {}
+) {
+  try {
+    await loadVideoDirectIntoElement(media, url, {
+      autoplay,
+      label: `${label}.direct`,
+      readyTimeoutMs: directTimeoutMs,
+    });
+    return "direct";
+  } catch (directErr) {
+    videoDebug(`${label}.direct.failed`, {
+      failure: directErr && directErr.message ? directErr.message : String(directErr || "unknown"),
+      src: url,
+    });
+  }
+  await loadVideoBlobIntoElement(media, url, {
+    autoplay,
+    label: `${label}.blob`,
+    readyTimeoutMs: blobTimeoutMs,
+    enableDirectRetry: false,
+  });
+  return "blob";
 }
 
 function translateScanState(value) {
@@ -1924,7 +2354,7 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
   });
   videoViewerState.fallbackReloading = true;
   videoViewerState.fallbackSkipNextSeeking = true;
-  armVideoViewerOpenProbeTimer(7000, () => {
+  armVideoViewerOpenProbeTimer(Math.max(VIDEO_READY_TIMEOUT_PREVIEW_DIRECT_MS, VIDEO_READY_TIMEOUT_PREVIEW_BLOB_MS) + 1000, () => {
     if (!videoViewerState.open || !videoViewerState.fallbackUsed || !videoViewerState.fallbackReloading) {
       return;
     }
@@ -1938,7 +2368,7 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
     startSec,
     videoViewerState.previewFormat || "mp4"
   );
-  loadVideoBlobIntoElement(player, reloadUrl, {
+  loadVideoPreviewIntoElement(player, reloadUrl, {
     autoplay,
     label: "viewer.fallback.restart",
   })
@@ -1963,7 +2393,7 @@ function restartVideoViewerFallbackFrom(startSec, autoplay) {
           src: fallbackUrl,
         });
         videoViewerState.previewFormat = fallbackFormat;
-        loadVideoBlobIntoElement(player, fallbackUrl, {
+        loadVideoPreviewIntoElement(player, fallbackUrl, {
           autoplay,
           label: `viewer.fallback.restart.${fallbackFormat}`,
         }).catch((retryErr) => {
@@ -2272,7 +2702,11 @@ function openImageViewer(rootId, path, name) {
   img.src = src;
 }
 
-function openVideoViewer(rootId, path, name, mime = "") {
+function openVideoViewer(rootId, path, name, playbackHint = null) {
+  const hint = playbackHint && typeof playbackHint === "object" ? playbackHint : { mime: playbackHint };
+  const mime = String(hint.mime || "").toLowerCase();
+  const videoMeta = hint.videoMeta || null;
+  const audioMeta = hint.audioMeta || null;
   if (videoViewerState.open) {
     closeVideoViewer();
   }
@@ -2316,28 +2750,30 @@ function openVideoViewer(rootId, path, name, mime = "") {
   updateVideoViewerPlaybackControls();
   player.controls = false;
   player.title = name || path || "video";
+  let nativePlayable = supportsNativeVideoPlayback(player, mime);
   videoViewerState.previewFormats = buildPreviewFormatOrder(player);
   videoViewerState.previewFormat = videoViewerState.previewFormats[0] || "mp4";
-  const nativePlayable = supportsNativeVideoPlayback(player, mime);
   const nativeUrl = buildNativeVideoUrl(rootId, path);
   videoDebug("viewer.native.capabilities", {
     mime,
     nativePlayable,
     nativeUrl,
+    videoMeta,
+    audioMeta,
     previewFormat: videoViewerState.previewFormat,
     previewFormats: videoViewerState.previewFormats,
   });
 
-  const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0, videoViewerState.previewFormat);
-  videoDebug("viewer.fallback.url", { fallbackUrl, format: videoViewerState.previewFormat });
   const activateFallback = (autoplay = false) => {
     if (!videoViewerState.open || videoViewerState.fallbackUsed) {
       return;
     }
+    const fallbackUrl = buildVideoViewerPreviewUrl(rootId, path, 0, videoViewerState.previewFormat || "mp4");
+    videoDebug("viewer.fallback.url", { fallbackUrl, format: videoViewerState.previewFormat });
     videoViewerState.fallbackUsed = true;
     videoViewerState.statusNote = t("video_viewer_status_loading");
     updateVideoViewerStatus();
-    armVideoViewerOpenProbeTimer(9000, () => {
+    armVideoViewerOpenProbeTimer(Math.max(VIDEO_READY_TIMEOUT_PREVIEW_DIRECT_MS, VIDEO_READY_TIMEOUT_PREVIEW_BLOB_MS) + 2000, () => {
       if (!videoViewerState.open || !videoViewerState.fallbackUsed || videoViewerState.hasInitialLayout) {
         return;
       }
@@ -2345,7 +2781,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
       updateVideoViewerStatus();
       updateVideoViewerPlaybackControls();
     });
-    loadVideoBlobIntoElement(player, fallbackUrl, {
+    loadVideoPreviewIntoElement(player, fallbackUrl, {
       autoplay,
       label: "viewer.fallback.init",
     }).catch((err) => {
@@ -2359,7 +2795,7 @@ function openVideoViewer(rootId, path, name, mime = "") {
           src: fallbackUrl,
         });
         videoViewerState.previewFormat = fallbackFormat;
-        loadVideoBlobIntoElement(player, fallbackUrl, {
+        loadVideoPreviewIntoElement(player, fallbackUrl, {
           autoplay,
           label: `viewer.fallback.init.${fallbackFormat}`,
         }).catch((retryErr) => {
@@ -2432,20 +2868,56 @@ function openVideoViewer(rootId, path, name, mime = "") {
     updateVideoViewerStatus();
     updateVideoViewerPlaybackControls();
   };
-  if (nativePlayable) {
-    loadVideoDirectIntoElement(player, nativeUrl, {
-      autoplay: true,
-      label: "viewer.native",
-    }).catch((err) => {
-      videoDebug("viewer.native.failed", {
-        failure: err && err.message ? err.message : String(err || "unknown"),
-        src: nativeUrl,
+  const startViewerPlayback = () => {
+    if (!videoViewerState.open || Number(videoViewerState.rootId) !== Number(rootId) || videoViewerState.path !== path) {
+      return;
+    }
+    if (nativePlayable) {
+      loadVideoDirectIntoElement(player, nativeUrl, {
+        autoplay: true,
+        label: "viewer.native",
+        readyTimeoutMs: VIDEO_READY_TIMEOUT_NATIVE_MS,
+      }).catch((err) => {
+        videoDebug("viewer.native.failed", {
+          failure: err && err.message ? err.message : String(err || "unknown"),
+          src: nativeUrl,
+        });
+        activateFallback(true);
       });
-      activateFallback(true);
-    });
-  } else {
+      return;
+    }
     activateFallback(true);
-  }
+  };
+  resolvePlaybackPlan(player, {
+    mime,
+    videoMeta,
+    audioMeta,
+    label: "viewer",
+  })
+    .then((plan) => {
+      if (plan && Array.isArray(plan.previewFormatOrder) && plan.previewFormatOrder.length) {
+        videoViewerState.previewFormats = [...plan.previewFormatOrder];
+        videoViewerState.previewFormat = videoViewerState.previewFormats[0] || "mp4";
+      }
+      if (plan) {
+        nativePlayable = Boolean(plan.nativePlayable);
+      }
+      videoDebug("viewer.playback.plan", {
+        mime,
+        nativePlayable,
+        previewFormat: videoViewerState.previewFormat,
+        previewFormats: videoViewerState.previewFormats,
+        source: plan && plan.source ? plan.source : "default",
+      });
+      startViewerPlayback();
+    })
+    .catch((err) => {
+      videoDebug("viewer.playback.plan.failed", {
+        mime,
+        failure: err && err.message ? err.message : String(err || "unknown"),
+      });
+      startViewerPlayback();
+    });
   updateVideoViewerPlaybackControls();
 }
 
@@ -2939,22 +3411,45 @@ function createFilePreviewNode(details) {
     video.preload = "auto";
     video.playsInline = true;
     video.muted = true;
-    const previewFormatOrder = buildPreviewFormatOrder(video);
-    const preferredPreviewFormat = previewFormatOrder[0] || "mp4";
-    videoDebug("inline.preview.formats", {
-      mime,
-      nativePlayable: supportsNativeVideoPlayback(video, mime),
-      previewFormatOrder,
-    });
+    let previewFormatOrder = buildPreviewFormatOrder(video);
+    let nativePlayable = supportsNativeVideoPlayback(video, mime);
     bindMediaDebugEvents(video, "inline.video");
     const note = document.createElement("div");
     note.className = "file-preview-note";
     note.textContent = t("file_preview_video_seek_hint");
-    const nativePlayable = supportsNativeVideoPlayback(video, mime);
     let useTranscodedPreview = true;
-    let activePreviewFormat = preferredPreviewFormat;
+    let activePreviewFormat = previewFormatOrder[0] || "mp4";
+    const playbackPlanPromise = resolvePlaybackPlan(video, {
+      mime,
+      videoMeta: details.video_meta || null,
+      audioMeta: details.audio_meta || null,
+      label: "inline",
+    })
+      .then((plan) => {
+        if (plan && Array.isArray(plan.previewFormatOrder) && plan.previewFormatOrder.length) {
+          previewFormatOrder = [...plan.previewFormatOrder];
+        }
+        nativePlayable = Boolean(plan && plan.nativePlayable);
+        if (!previewFormatOrder.includes(activePreviewFormat)) {
+          activePreviewFormat = previewFormatOrder[0] || "mp4";
+        }
+        videoDebug("inline.playback.plan", {
+          mime,
+          nativePlayable,
+          previewFormatOrder,
+          source: plan && plan.source ? plan.source : "default",
+        });
+      })
+      .catch((err) => {
+        videoDebug("inline.playback.plan.failed", {
+          mime,
+          failure: err && err.message ? err.message : String(err || "unknown"),
+          nativePlayable,
+          previewFormatOrder,
+        });
+      });
 
-    const buildTranscodedUrl = (startSec, containerFormat = preferredPreviewFormat) =>
+    const buildTranscodedUrl = (startSec, containerFormat = activePreviewFormat) =>
       buildApiUrl("/api/file/preview/video", {
         root_id: details.root_id,
         path: details.path,
@@ -2972,7 +3467,7 @@ function createFilePreviewNode(details) {
       reloadingBySeek = true;
       skipNextSeeking = true;
       const restartUrl = buildTranscodedUrl(startSec, containerFormat);
-      loadVideoBlobIntoElement(video, restartUrl, {
+      loadVideoPreviewIntoElement(video, restartUrl, {
         autoplay,
         label: "inline.restart",
       })
@@ -2989,7 +3484,7 @@ function createFilePreviewNode(details) {
           }
           reloadingBySeek = false;
           videoDebug("inline.restart.failed", {
-            error: String(err && err.message ? err.message : err),
+            failure: String(err && err.message ? err.message : err),
             src: restartUrl,
           });
         });
@@ -3028,7 +3523,7 @@ function createFilePreviewNode(details) {
             src: previewUrl,
             format: activePreviewFormat,
           });
-          loadVideoBlobIntoElement(video, previewUrl, {
+          loadVideoPreviewIntoElement(video, previewUrl, {
             autoplay,
             label: "inline.preview",
           })
@@ -3046,7 +3541,7 @@ function createFilePreviewNode(details) {
                   src: fallbackUrl,
                 });
                 activePreviewFormat = fallbackFormat;
-                loadVideoBlobIntoElement(video, fallbackUrl, {
+                loadVideoPreviewIntoElement(video, fallbackUrl, {
                   autoplay,
                   label: `inline.preview.${fallbackFormat}`,
                 }).catch((retryErr) => {
@@ -3098,6 +3593,7 @@ function createFilePreviewNode(details) {
       loadVideoDirectIntoElement(video, nativeUrl, {
         autoplay,
         label: "inline.native",
+        readyTimeoutMs: VIDEO_READY_TIMEOUT_NATIVE_MS,
       })
         .then(() => {
           note.textContent = t("file_preview_video_seek_hint");
@@ -3107,17 +3603,20 @@ function createFilePreviewNode(details) {
             failure: err && err.message ? err.message : String(err || "unknown"),
             src: nativeUrl,
           });
-          activePreviewFormat = preferredPreviewFormat;
+          activePreviewFormat = previewFormatOrder[0] || "mp4";
           loadTranscodedPreview(autoplay, 0);
         });
     };
 
     const loadPreview = (autoplay) => {
-      if (nativePlayable) {
-        loadNativePreview(autoplay);
-        return;
-      }
-      loadTranscodedPreview(autoplay);
+      playbackPlanPromise.finally(() => {
+        if (nativePlayable) {
+          loadNativePreview(autoplay);
+          return;
+        }
+        activePreviewFormat = previewFormatOrder[0] || "mp4";
+        loadTranscodedPreview(autoplay);
+      });
     };
 
     video.addEventListener("seeking", () => {
@@ -3425,7 +3924,11 @@ async function openFileByDoubleClick(item) {
       return;
     }
     if (details && (isVideoMime(details.mime) || isVideoName(item.name))) {
-      openVideoViewer(selectedDirContext.rootId, item.path, item.name, details.mime || "");
+      openVideoViewer(selectedDirContext.rootId, item.path, item.name, {
+        mime: details.mime || "",
+        videoMeta: details.video_meta || null,
+        audioMeta: details.audio_meta || null,
+      });
       return;
     }
   } catch {
@@ -3434,7 +3937,7 @@ async function openFileByDoubleClick(item) {
       return;
     }
     if (isVideoName(item.name)) {
-      openVideoViewer(selectedDirContext.rootId, item.path, item.name, "");
+      openVideoViewer(selectedDirContext.rootId, item.path, item.name, { mime: "" });
       return;
     }
   }
@@ -4138,6 +4641,11 @@ function bindActions() {
 
 async function bootstrap() {
   initLanguage();
+  videoDebug("timing.config", {
+    nativeReadyMs: VIDEO_READY_TIMEOUT_NATIVE_MS,
+    previewDirectReadyMs: VIDEO_READY_TIMEOUT_PREVIEW_DIRECT_MS,
+    previewBlobReadyMs: VIDEO_READY_TIMEOUT_PREVIEW_BLOB_MS,
+  });
   applyPreviewAutostartSetting(readPreviewAutostartSetting(), { persist: false, rerender: false });
   initBrowserPaneResize();
   initImageViewer();

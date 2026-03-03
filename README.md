@@ -59,6 +59,20 @@ catalogic db migrate --db ./data/catalogic.db
 catalogic --help
 ```
 
+## Dependency Baseline
+
+RU:
+- Для стабильного поведения video/Ranges backend зависимости зафиксированы:
+  - `fastapi==0.133.0`
+  - `starlette==0.52.1`
+  - `uvicorn==0.41.0`
+
+EN:
+- Backend dependencies are pinned for reproducible video/Range behavior:
+  - `fastapi==0.133.0`
+  - `starlette==0.52.1`
+  - `uvicorn==0.41.0`
+
 ## STEP1 Services
 
 ```bash
@@ -98,6 +112,7 @@ RU:
   - `CATALOGIC_PREVIEW_TRANSCODE_TIMEOUT_SEC` (таймаут транскодирования preview)
   - `CATALOGIC_PREVIEW_CACHE_TTL_SEC`, `CATALOGIC_PREVIEW_CACHE_MAX_ITEMS` (TTL/лимит temp-кэша preview для корректной Range-отдачи)
   - `CATALOGIC_VIDEO_DEBUG` (`0|1`, расширенные video-логи: request headers, ffmpeg cmd, ffprobe summary)
+- Рекомендуемый baseline для preview fallback: `CATALOGIC_PREVIEW_MAX_PROCS=4`, `CATALOGIC_PREVIEW_SLOT_WAIT_SEC=60`, `CATALOGIC_PREVIEW_CACHE_MAX_ITEMS=128`.
 
 EN:
 - Backend now has structured request logging: method/path/status/latency/client and `X-Request-ID`.
@@ -114,6 +129,7 @@ EN:
   - `CATALOGIC_PREVIEW_TRANSCODE_TIMEOUT_SEC` (preview transcode timeout)
   - `CATALOGIC_PREVIEW_CACHE_TTL_SEC`, `CATALOGIC_PREVIEW_CACHE_MAX_ITEMS` (TTL/size for temp preview cache to support Range responses)
   - `CATALOGIC_VIDEO_DEBUG` (`0|1`, extra video logs: request headers, ffmpeg cmd, ffprobe summary)
+- Recommended preview fallback baseline: `CATALOGIC_PREVIEW_MAX_PROCS=4`, `CATALOGIC_PREVIEW_SLOT_WAIT_SEC=60`, `CATALOGIC_PREVIEW_CACHE_MAX_ITEMS=128`.
 
 ## Frontend Notes
 
@@ -124,6 +140,9 @@ RU:
 - В статусе отображается текущий обрабатываемый файл.
 - Во вкладке `Состояние` добавлен блок `Сеть / Прокси` с параметрами текущего запроса (`proxy_ip`, `peer_ip`, `x_forwarded_for`, и др.).
 - Для клиентской video-диагностики откройте UI с `?video_debug=1` (или сохраните `localStorage.catalogic_video_debug=1`).
+- Таймауты ready-state можно переопределить:
+  - Query: `video_native_timeout_ms`, `video_preview_direct_timeout_ms`, `video_preview_blob_timeout_ms`
+  - LocalStorage: `catalogic_video_native_timeout_ms`, `catalogic_video_preview_direct_timeout_ms`, `catalogic_video_preview_blob_timeout_ms`
 - Можно открыть UI с `?lang=ru` или `?lang=en` для принудительного выбора языка.
 - При первом запуске (если язык ещё не сохранён) язык определяется по настройкам браузера.
 
@@ -134,6 +153,9 @@ EN:
 - Current file being processed is shown in scanner status.
 - `State` tab now includes `Network / Proxy` section with current request network fields (`proxy_ip`, `peer_ip`, `x_forwarded_for`, etc.).
 - For client-side video diagnostics open UI with `?video_debug=1` (or set `localStorage.catalogic_video_debug=1`).
+- You can override ready-state timeouts:
+  - Query: `video_native_timeout_ms`, `video_preview_direct_timeout_ms`, `video_preview_blob_timeout_ms`
+  - LocalStorage: `catalogic_video_native_timeout_ms`, `catalogic_video_preview_direct_timeout_ms`, `catalogic_video_preview_blob_timeout_ms`
 - You can force UI language via `?lang=ru` or `?lang=en`.
 - On first launch (when no saved language exists), UI language is auto-detected from browser settings.
 
