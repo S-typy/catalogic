@@ -450,6 +450,77 @@ button {
   color: #b42318;
 }
 
+.dups-controls {
+  align-items: center;
+}
+
+.dups-controls > label {
+  font-weight: 600;
+  color: #334e68;
+}
+
+#dups-mode-select {
+  min-width: 260px;
+}
+
+#dups-min-size-input,
+#dups-limit-input {
+  min-width: 120px;
+  width: 140px;
+}
+
+.dups-box {
+  min-height: 240px;
+  max-height: min(62vh, 720px);
+}
+
+.dups-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dups-table th,
+.dups-table td {
+  text-align: left;
+  border-bottom: 1px solid #e5e8ee;
+  padding: 8px 6px;
+  vertical-align: top;
+}
+
+.dups-table td:nth-child(2),
+.dups-table td:nth-child(3),
+.dups-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
+.dups-key-main {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.dups-key-type {
+  margin-top: 4px;
+  color: #52606d;
+  font-size: 12px;
+}
+
+.dups-path-list {
+  margin: 6px 0 0 18px;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.dups-path-list li {
+  margin: 0 0 4px;
+}
+
+.dups-path-list code {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
 .image-viewer-overlay {
   position: fixed;
   inset: 0;

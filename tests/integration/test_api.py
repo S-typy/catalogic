@@ -29,6 +29,8 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
     (data_root / "b").mkdir(parents=True)
     (data_root / "a" / "dup.txt").write_text("ab")
     (data_root / "b" / "dup.txt").write_text("cd")
+    (data_root / "a" / "same_a.bin").write_text("same")
+    (data_root / "b" / "same_b.bin").write_text("same")
     (data_root / "a" / "single.md").write_text("hello")
 
     db_path = tmp_path / "catalogic.db"
@@ -99,6 +101,14 @@ def test_api_scan_tree_search_duplicates(tmp_path: Path) -> None:
     groups = dups.json()["groups"]
     assert groups
     assert groups[0]["name"] == "dup.txt"
+
+    dups_md5 = client.get("/api/duplicates", params={"mode": "md5"})
+    assert dups_md5.status_code == 200
+    groups_md5 = dups_md5.json()["groups"]
+    assert any(
+        {Path(p).name for p in item["paths"]} == {"same_a.bin", "same_b.bin"}
+        for item in groups_md5
+    )
 
     state = client.get("/api/state")
     assert state.status_code == 200

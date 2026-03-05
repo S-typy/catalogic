@@ -7,7 +7,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from catalogic.core.entities import AudioMetadata, FileRecord, ImageMetadata, ScanRoot, VideoMetadata
 from catalogic.storage.repositories.base import FileRepository, ScanRootRepository
@@ -378,8 +378,16 @@ class SQLiteFileRepository(FileRepository):
         children.sort(key=lambda item: (item.get("type") != "dir", str(item.get("name")).lower()))
         return children
 
-    def find_duplicates_by_name_size(self, *, limit_groups: int = 200) -> list[dict[str, Any]]:
-        cur = self._conn.execute("SELECT path, size FROM files ORDER BY path")
+    def find_duplicates_by_name_size(
+        self,
+        *,
+        limit_groups: int = 200,
+        min_size_bytes: int = 1,
+    ) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            "SELECT path, size FROM files WHERE size >= ? ORDER BY path",
+            (max(0, int(min_size_bytes)),),
+        )
         groups: dict[tuple[str, int], list[str]] = {}
         for row in cur.fetchall():
             path = str(row["path"])
@@ -393,14 +401,81 @@ class SQLiteFileRepository(FileRepository):
                 continue
             duplicates.append(
                 {
+                    "mode": "name_size",
                     "name": name,
                     "size": size,
                     "count": len(paths),
+                    "wasted_size": max(0, (len(paths) - 1) * int(size)),
                     "paths": sorted(paths),
                 }
             )
-        duplicates.sort(key=lambda item: (-int(item["count"]), str(item["name"])))
+        duplicates.sort(key=lambda item: (-int(item["count"]), -int(item["size"]), str(item["name"])))
         return duplicates[:limit_groups]
+
+    def find_duplicates_by_md5(
+        self,
+        *,
+        limit_groups: int = 200,
+        min_size_bytes: int = 1,
+    ) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            """
+            SELECT path, size, md5
+            FROM files
+            WHERE size >= ? AND md5 IS NOT NULL AND md5 <> ''
+            ORDER BY md5, size, path
+            """,
+            (max(0, int(min_size_bytes)),),
+        )
+        groups: dict[tuple[str, int], list[str]] = {}
+        for row in cur.fetchall():
+            md5 = str(row["md5"])
+            size = int(row["size"])
+            path = str(row["path"])
+            groups.setdefault((md5, size), []).append(path)
+
+        duplicates: list[dict[str, Any]] = []
+        for (md5, size), paths in groups.items():
+            if len(paths) < 2:
+                continue
+            hash_kind = "sample" if md5.lower().startswith("sample:") else "full"
+            duplicates.append(
+                {
+                    "mode": "md5",
+                    "md5": md5,
+                    "hash_kind": hash_kind,
+                    "size": size,
+                    "count": len(paths),
+                    "wasted_size": max(0, (len(paths) - 1) * int(size)),
+                    "paths": sorted(paths),
+                }
+            )
+        duplicates.sort(
+            key=lambda item: (
+                -int(item["count"]),
+                -int(item["size"]),
+                1 if str(item.get("hash_kind")) == "sample" else 0,
+                str(item["md5"]),
+            )
+        )
+        return duplicates[:limit_groups]
+
+    def find_duplicates(
+        self,
+        *,
+        mode: Literal["name_size", "md5"] = "name_size",
+        limit_groups: int = 200,
+        min_size_bytes: int = 1,
+    ) -> list[dict[str, Any]]:
+        if mode == "md5":
+            return self.find_duplicates_by_md5(
+                limit_groups=limit_groups,
+                min_size_bytes=min_size_bytes,
+            )
+        return self.find_duplicates_by_name_size(
+            limit_groups=limit_groups,
+            min_size_bytes=min_size_bytes,
+        )
 
 
 DEFAULT_APP_SETTINGS: dict[str, Any] = {

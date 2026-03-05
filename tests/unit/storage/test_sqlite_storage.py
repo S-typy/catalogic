@@ -94,6 +94,46 @@ def test_sqlite_list_directory_children(tmp_path: Path) -> None:
         storage.close()
 
 
+def test_sqlite_find_duplicates_modes(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalogic.db"
+    data_root = tmp_path / "data"
+    (data_root / "a").mkdir(parents=True)
+    (data_root / "b").mkdir(parents=True)
+
+    storage = open_sqlite_storage(db_path, migrate=True)
+    try:
+        root = storage.scan_roots.get_or_create(str(data_root))
+        assert root.id is not None
+
+        storage.files.upsert(root.id, _record(data_root / "a" / "dup.txt", size=11, md5="a" * 32))
+        storage.files.upsert(root.id, _record(data_root / "b" / "dup.txt", size=11, md5="b" * 32))
+        storage.files.upsert(root.id, _record(data_root / "a" / "one.bin", size=20, md5="c" * 32))
+        storage.files.upsert(root.id, _record(data_root / "b" / "two.bin", size=20, md5="c" * 32))
+        storage.files.upsert(root.id, _record(data_root / "a" / "sample1.mkv", size=50, md5="sample:" + "d" * 32))
+        storage.files.upsert(root.id, _record(data_root / "b" / "sample2.mkv", size=50, md5="sample:" + "d" * 32))
+
+        by_name_size = storage.files.find_duplicates(mode="name_size", limit_groups=20, min_size_bytes=1)
+        assert len(by_name_size) == 1
+        assert by_name_size[0]["mode"] == "name_size"
+        assert by_name_size[0]["name"] == "dup.txt"
+        assert by_name_size[0]["count"] == 2
+        assert by_name_size[0]["wasted_size"] == 11
+
+        by_md5 = storage.files.find_duplicates(mode="md5", limit_groups=20, min_size_bytes=1)
+        assert len(by_md5) == 2
+        hashes = {item["md5"] for item in by_md5}
+        assert "c" * 32 in hashes
+        assert "sample:" + "d" * 32 in hashes
+        sample_group = next(item for item in by_md5 if item["md5"].startswith("sample:"))
+        assert sample_group["hash_kind"] == "sample"
+
+        md5_filtered = storage.files.find_duplicates(mode="md5", limit_groups=20, min_size_bytes=40)
+        assert len(md5_filtered) == 1
+        assert md5_filtered[0]["md5"].startswith("sample:")
+    finally:
+        storage.close()
+
+
 def test_sqlite_get_file_by_root_and_path(tmp_path: Path) -> None:
     db_path = tmp_path / "catalogic.db"
     data_root = tmp_path / "data"

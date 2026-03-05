@@ -897,11 +897,25 @@ def create_api_router() -> APIRouter:
     @router.get("/duplicates")
     def get_duplicates(
         request: Request,
+        mode: Literal["name_size", "md5"] = Query(default="name_size"),
         limit_groups: int = Query(default=200, ge=1, le=1000),
+        min_size_bytes: int = Query(default=1, ge=0),
     ) -> dict[str, Any]:
         db_path = request.app.state.db_path
-        groups = find_duplicates(db_path, limit_groups=limit_groups)
-        return {"groups": groups, "count": len(groups)}
+        groups = find_duplicates(
+            db_path,
+            mode=mode,
+            limit_groups=limit_groups,
+            min_size_bytes=min_size_bytes,
+        )
+        total_wasted_bytes = sum(max(0, int(item.get("wasted_size", 0))) for item in groups)
+        return {
+            "mode": mode,
+            "min_size_bytes": int(min_size_bytes),
+            "groups": groups,
+            "count": len(groups),
+            "total_wasted_bytes": total_wasted_bytes,
+        }
 
     @router.get("/settings")
     def get_settings(request: Request) -> dict[str, Any]:

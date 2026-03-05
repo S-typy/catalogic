@@ -139,6 +139,9 @@ RU:
 - Добавлен выбор языка интерфейса: `Русский / English`.
 - В статусе отображается текущий обрабатываемый файл.
 - Во вкладке `Состояние` добавлен блок `Сеть / Прокси` с параметрами текущего запроса (`proxy_ip`, `peer_ip`, `x_forwarded_for`, и др.).
+- Во вкладке `Поиск дубликатов` доступны режимы:
+  - `Имя + размер` (быстрый эвристический поиск)
+  - `Хэш + размер` (точный поиск по рассчитанному hash; `sample:` помечается отдельно)
 - Для клиентской video-диагностики откройте UI с `?video_debug=1` (или сохраните `localStorage.catalogic_video_debug=1`).
 - Таймауты ready-state можно переопределить:
   - Query: `video_native_timeout_ms`, `video_preview_direct_timeout_ms`, `video_preview_blob_timeout_ms`
@@ -152,6 +155,9 @@ EN:
 - UI language selector is available: `Russian / English`.
 - Current file being processed is shown in scanner status.
 - `State` tab now includes `Network / Proxy` section with current request network fields (`proxy_ip`, `peer_ip`, `x_forwarded_for`, etc.).
+- `Duplicate Search` tab now supports:
+  - `Name + size` mode (fast heuristic)
+  - `Hash + size` mode (exact matching by computed hash; `sample:` hashes are marked)
 - For client-side video diagnostics open UI with `?video_debug=1` (or set `localStorage.catalogic_video_debug=1`).
 - You can override ready-state timeouts:
   - Query: `video_native_timeout_ms`, `video_preview_direct_timeout_ms`, `video_preview_blob_timeout_ms`

@@ -214,9 +214,38 @@
     </section>
 
     <section id="tab-dups" class="panel">
-      <h2 data-i18n="dups_title">Поиск дубликатов (имя + размер)</h2>
-      <button id="dups-refresh-btn" data-i18n="dups_refresh_btn">Обновить</button>
-      <pre id="dups-result" class="box"></pre>
+      <h2 data-i18n="dups_title">Поиск дубликатов</h2>
+      <div class="row dups-controls">
+        <label for="dups-mode-select" data-i18n="dups_mode_label">Режим:</label>
+        <select id="dups-mode-select">
+          <option value="name_size" data-i18n="dups_mode_name_size">Имя + размер (быстрый)</option>
+          <option value="md5" data-i18n="dups_mode_md5">Хэш + размер (точный)</option>
+        </select>
+        <label for="dups-min-size-input" data-i18n="dups_min_size_label">Мин. размер (MB):</label>
+        <input id="dups-min-size-input" type="number" min="0" max="1048576" step="1" value="1">
+        <label for="dups-limit-input" data-i18n="dups_limit_label">Лимит групп:</label>
+        <input id="dups-limit-input" type="number" min="1" max="1000" step="1" value="200">
+        <button id="dups-refresh-btn" data-i18n="dups_refresh_btn">Обновить</button>
+      </div>
+      <div id="dups-summary" class="selection-info"></div>
+      <div class="box dups-box">
+        <table class="dups-table">
+          <thead>
+            <tr>
+              <th data-i18n="dups_col_key">Ключ</th>
+              <th data-i18n="dups_col_size">Размер</th>
+              <th data-i18n="dups_col_count">Файлов</th>
+              <th data-i18n="dups_col_wasted">Освобождаемо</th>
+              <th data-i18n="dups_col_paths">Пути</th>
+            </tr>
+          </thead>
+          <tbody id="dups-table-body">
+            <tr>
+              <td colspan="5" data-i18n="dups_loading">Загрузка дубликатов...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
   </main>
 

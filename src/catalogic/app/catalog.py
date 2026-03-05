@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from catalogic.core.entities import FileRecord, ScanRoot
 from catalogic.storage import open_sqlite_storage
@@ -70,10 +70,20 @@ def search_files(db_path: str, pattern: str, *, limit: int = 200, offset: int = 
         storage.close()
 
 
-def find_duplicates(db_path: str, *, limit_groups: int = 200) -> list[dict[str, Any]]:
+def find_duplicates(
+    db_path: str,
+    *,
+    mode: Literal["name_size", "md5"] = "name_size",
+    limit_groups: int = 200,
+    min_size_bytes: int = 1,
+) -> list[dict[str, Any]]:
     storage = open_sqlite_storage(db_path, migrate=True)
     try:
-        return storage.files.find_duplicates_by_name_size(limit_groups=limit_groups)
+        return storage.files.find_duplicates(
+            mode=mode,
+            limit_groups=limit_groups,
+            min_size_bytes=min_size_bytes,
+        )
     finally:
         storage.close()
 

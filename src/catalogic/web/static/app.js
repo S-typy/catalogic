@@ -70,8 +70,27 @@ const I18N = {
     state_metrics: "Метрики",
     state_utilities: "Утилиты",
     state_network: "Сеть / Прокси",
-    dups_title: "Поиск дубликатов (имя + размер)",
+    dups_title: "Поиск дубликатов",
+    dups_mode_label: "Режим:",
+    dups_mode_name_size: "Имя + размер (быстрый)",
+    dups_mode_md5: "Хэш + размер (точный)",
+    dups_min_size_label: "Мин. размер (MB):",
+    dups_limit_label: "Лимит групп:",
     dups_refresh_btn: "Обновить",
+    dups_col_key: "Ключ",
+    dups_col_size: "Размер",
+    dups_col_count: "Файлов",
+    dups_col_wasted: "Освобождаемо",
+    dups_col_paths: "Пути",
+    dups_group_type_name_size: "имя + размер",
+    dups_group_type_md5_full: "MD5 (полный)",
+    dups_group_type_md5_sample: "sample-hash",
+    dups_paths_summary: "Пути ({count})",
+    dups_paths_truncated: "... и ещё {count}",
+    dups_loading: "Загрузка дубликатов...",
+    dups_empty: "Дубликаты не найдены.",
+    dups_summary: "Групп: {count}, потенциально освободится: {wasted}, режим: {mode}",
+    dups_error: "Не удалось загрузить дубликаты: {message}",
     delete_root_btn: "Удалить",
     pane_resize_title: "Изменить размер панелей",
     sort_name: "Имя",
@@ -215,8 +234,27 @@ const I18N = {
     state_metrics: "Metrics",
     state_utilities: "Utilities",
     state_network: "Network / Proxy",
-    dups_title: "Duplicate Search (name + size)",
+    dups_title: "Duplicate Search",
+    dups_mode_label: "Mode:",
+    dups_mode_name_size: "Name + size (fast)",
+    dups_mode_md5: "Hash + size (exact)",
+    dups_min_size_label: "Min size (MB):",
+    dups_limit_label: "Group limit:",
     dups_refresh_btn: "Refresh",
+    dups_col_key: "Key",
+    dups_col_size: "Size",
+    dups_col_count: "Files",
+    dups_col_wasted: "Reclaimable",
+    dups_col_paths: "Paths",
+    dups_group_type_name_size: "name + size",
+    dups_group_type_md5_full: "MD5 (full)",
+    dups_group_type_md5_sample: "sample-hash",
+    dups_paths_summary: "Paths ({count})",
+    dups_paths_truncated: "... and {count} more",
+    dups_loading: "Loading duplicates...",
+    dups_empty: "No duplicates found.",
+    dups_summary: "Groups: {count}, reclaimable: {wasted}, mode: {mode}",
+    dups_error: "Failed to load duplicates: {message}",
     delete_root_btn: "Delete",
     pane_resize_title: "Resize panels",
     sort_name: "Name",
@@ -315,6 +353,15 @@ let selectedRowType = null;
 let currentFiles = [];
 let searchTreeState = null;
 let fileDetailsRequestVersion = 0;
+const duplicatesState = {
+  mode: "name_size",
+  minSizeMb: 1,
+  limitGroups: 200,
+  groups: [],
+  count: 0,
+  totalWastedBytes: 0,
+  error: "",
+};
 const fileSort = { key: "name", direction: "asc" };
 let currentLang = "ru";
 let previewAutostart = false;
@@ -1392,6 +1439,8 @@ function setLanguage(lang) {
   }
   applyI18nToDocument();
   updateFilesTitle();
+  updateSortButtons();
+  renderDuplicatesTable();
   if (imageViewerState.open) {
     updateImageViewerStatus();
   }
@@ -4220,9 +4269,227 @@ async function runTreeSearch() {
   box.textContent = t("search_tree_applied", { count: built.count });
 }
 
+function normalizeDuplicateMode(raw) {
+  const mode = String(raw || "").trim().toLowerCase();
+  if (mode === "md5") {
+    return "md5";
+  }
+  return "name_size";
+}
+
+function duplicateModeLabel(mode) {
+  return normalizeDuplicateMode(mode) === "md5" ? t("dups_mode_md5") : t("dups_mode_name_size");
+}
+
+function duplicateGroupTypeLabel(group) {
+  const mode = normalizeDuplicateMode(group && group.mode);
+  if (mode === "md5") {
+    return String(group && group.hash_kind) === "sample"
+      ? t("dups_group_type_md5_sample")
+      : t("dups_group_type_md5_full");
+  }
+  return t("dups_group_type_name_size");
+}
+
+function duplicateGroupKey(group) {
+  const mode = normalizeDuplicateMode(group && group.mode);
+  if (mode === "md5") {
+    return String((group && group.md5) || "-");
+  }
+  return String((group && group.name) || "-");
+}
+
+function parseNonNegativeInt(raw, fallback = 0) {
+  const value = Number.parseInt(String(raw ?? "").trim(), 10);
+  if (!Number.isFinite(value) || value < 0) {
+    return fallback;
+  }
+  return value;
+}
+
+function applyDuplicateFiltersToDom() {
+  const modeSelect = $("dups-mode-select");
+  if (modeSelect) {
+    modeSelect.value = normalizeDuplicateMode(duplicatesState.mode);
+  }
+  const minSizeInput = $("dups-min-size-input");
+  if (minSizeInput) {
+    minSizeInput.value = String(parseNonNegativeInt(duplicatesState.minSizeMb, 1));
+  }
+  const limitInput = $("dups-limit-input");
+  if (limitInput) {
+    const limit = Math.min(1000, Math.max(1, parseNonNegativeInt(duplicatesState.limitGroups, 200)));
+    limitInput.value = String(limit);
+  }
+}
+
+function readDuplicateFiltersFromDom() {
+  const mode = normalizeDuplicateMode($("dups-mode-select")?.value || duplicatesState.mode);
+  const minSizeMb = Math.max(0, parseNonNegativeInt($("dups-min-size-input")?.value, duplicatesState.minSizeMb));
+  const limitGroups = Math.min(
+    1000,
+    Math.max(1, parseNonNegativeInt($("dups-limit-input")?.value, duplicatesState.limitGroups))
+  );
+  return { mode, minSizeMb, limitGroups };
+}
+
+function renderDuplicatesTable() {
+  const tbody = $("dups-table-body");
+  const summaryNode = $("dups-summary");
+  if (!tbody) {
+    return;
+  }
+  tbody.innerHTML = "";
+  if (summaryNode) {
+    if (duplicatesState.error) {
+      summaryNode.textContent = duplicatesState.error;
+      summaryNode.style.color = "#b42318";
+    } else {
+      summaryNode.textContent = t("dups_summary", {
+        count: Number.isFinite(duplicatesState.count) ? duplicatesState.count : 0,
+        wasted: formatSize(duplicatesState.totalWastedBytes),
+        mode: duplicateModeLabel(duplicatesState.mode),
+      });
+      summaryNode.style.color = "";
+    }
+  }
+
+  if (duplicatesState.error) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.className = "file-preview-error";
+    cell.textContent = duplicatesState.error;
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    return;
+  }
+
+  const groups = Array.isArray(duplicatesState.groups) ? duplicatesState.groups : [];
+  if (!groups.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.textContent = t("dups_empty");
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    return;
+  }
+
+  groups.forEach((group) => {
+    const row = document.createElement("tr");
+
+    const keyCell = document.createElement("td");
+    const keyMain = document.createElement("div");
+    keyMain.className = "dups-key-main";
+    keyMain.textContent = duplicateGroupKey(group);
+    keyCell.appendChild(keyMain);
+    const keyType = document.createElement("div");
+    keyType.className = "dups-key-type";
+    keyType.textContent = duplicateGroupTypeLabel(group);
+    keyCell.appendChild(keyType);
+    row.appendChild(keyCell);
+
+    const sizeCell = document.createElement("td");
+    sizeCell.textContent = formatSize(group && group.size);
+    row.appendChild(sizeCell);
+
+    const countCell = document.createElement("td");
+    countCell.textContent = String(Number(group && group.count) || 0);
+    row.appendChild(countCell);
+
+    const wastedCell = document.createElement("td");
+    wastedCell.textContent = formatSize(group && group.wasted_size);
+    row.appendChild(wastedCell);
+
+    const pathsCell = document.createElement("td");
+    const paths = Array.isArray(group && group.paths) ? group.paths : [];
+    const details = document.createElement("details");
+    if (paths.length <= 3) {
+      details.open = true;
+    }
+    const summary = document.createElement("summary");
+    summary.textContent = t("dups_paths_summary", { count: paths.length });
+    details.appendChild(summary);
+
+    const list = document.createElement("ul");
+    list.className = "dups-path-list";
+    const maxPaths = 200;
+    paths.slice(0, maxPaths).forEach((path) => {
+      const item = document.createElement("li");
+      const code = document.createElement("code");
+      code.textContent = String(path);
+      item.appendChild(code);
+      list.appendChild(item);
+    });
+    if (paths.length > maxPaths) {
+      const item = document.createElement("li");
+      item.textContent = t("dups_paths_truncated", { count: paths.length - maxPaths });
+      list.appendChild(item);
+    }
+    details.appendChild(list);
+    pathsCell.appendChild(details);
+    row.appendChild(pathsCell);
+
+    tbody.appendChild(row);
+  });
+}
+
 async function refreshDuplicates() {
-  const data = await api("/api/duplicates");
-  $("dups-result").textContent = JSON.stringify(data, null, 2);
+  const filters = readDuplicateFiltersFromDom();
+  duplicatesState.mode = filters.mode;
+  duplicatesState.minSizeMb = filters.minSizeMb;
+  duplicatesState.limitGroups = filters.limitGroups;
+  duplicatesState.error = "";
+  duplicatesState.groups = [];
+  duplicatesState.count = 0;
+  duplicatesState.totalWastedBytes = 0;
+
+  const tbody = $("dups-table-body");
+  if (tbody) {
+    tbody.innerHTML = "";
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.textContent = t("dups_loading");
+    row.appendChild(cell);
+    tbody.appendChild(row);
+  }
+  const summaryNode = $("dups-summary");
+  if (summaryNode) {
+    summaryNode.textContent = t("dups_loading");
+    summaryNode.style.color = "";
+  }
+
+  const minSizeBytes = Math.round(filters.minSizeMb * 1024 * 1024);
+  try {
+    const url = buildApiUrl("/api/duplicates", {
+      mode: filters.mode,
+      limit_groups: filters.limitGroups,
+      min_size_bytes: minSizeBytes,
+    });
+    const data = await api(url);
+    duplicatesState.mode = normalizeDuplicateMode(data.mode || filters.mode);
+    duplicatesState.groups = Array.isArray(data.groups) ? data.groups : [];
+    duplicatesState.count = Number.isFinite(Number(data.count))
+      ? Number(data.count)
+      : duplicatesState.groups.length;
+    duplicatesState.totalWastedBytes = Number.isFinite(Number(data.total_wasted_bytes))
+      ? Number(data.total_wasted_bytes)
+      : duplicatesState.groups.reduce(
+          (acc, item) => acc + Math.max(0, Number(item && item.wasted_size) || 0),
+          0
+        );
+    duplicatesState.error = "";
+    renderDuplicatesTable();
+  } catch (err) {
+    duplicatesState.groups = [];
+    duplicatesState.count = 0;
+    duplicatesState.totalWastedBytes = 0;
+    duplicatesState.error = t("dups_error", { message: extractApiErrorMessage(err.message) });
+    renderDuplicatesTable();
+    throw err;
+  }
 }
 
 async function refreshRoots() {
@@ -4525,7 +4792,38 @@ function bindActions() {
     }
   };
 
-  $("dups-refresh-btn").onclick = refreshDuplicates;
+  $("dups-refresh-btn").onclick = async () => {
+    try {
+      await refreshDuplicates();
+    } catch (err) {
+      alert(t("dups_error", { message: extractApiErrorMessage(err.message) }));
+    }
+  };
+  const dupsModeSelect = $("dups-mode-select");
+  if (dupsModeSelect) {
+    dupsModeSelect.onchange = () => {
+      const filters = readDuplicateFiltersFromDom();
+      duplicatesState.mode = filters.mode;
+      duplicatesState.minSizeMb = filters.minSizeMb;
+      duplicatesState.limitGroups = filters.limitGroups;
+      applyDuplicateFiltersToDom();
+    };
+  }
+  ["dups-min-size-input", "dups-limit-input"].forEach((id) => {
+    const input = $(id);
+    if (!input) {
+      return;
+    }
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      refreshDuplicates().catch((err) => {
+        alert(t("dups_error", { message: extractApiErrorMessage(err.message) }));
+      });
+    });
+  });
   const saveRuntimeBtn = $("save-runtime-settings-btn");
   if (saveRuntimeBtn) {
     saveRuntimeBtn.onclick = async () => {
@@ -4650,6 +4948,7 @@ async function bootstrap() {
   initBrowserPaneResize();
   initImageViewer();
   initVideoViewer();
+  applyDuplicateFiltersToDom();
   bindActions();
   updateSortButtons();
   await refreshRoots().catch((err) => {
