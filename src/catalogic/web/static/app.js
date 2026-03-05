@@ -4240,6 +4240,37 @@ async function refreshTree() {
   renderTreeRoots(roots);
 }
 
+async function fetchAllSearchItems(pattern) {
+  const pageSize = 5000;
+  const maxItems = 50000;
+  let offset = 0;
+  const items = [];
+
+  while (items.length < maxItems) {
+    const data = await api(
+      buildApiUrl("/api/search", {
+        pattern,
+        limit: pageSize,
+        offset,
+      })
+    );
+    const page = Array.isArray(data && data.items) ? data.items : [];
+    if (!page.length) {
+      break;
+    }
+    items.push(...page);
+    if (page.length < pageSize) {
+      break;
+    }
+    offset += page.length;
+  }
+
+  if (items.length > maxItems) {
+    items.length = maxItems;
+  }
+  return items;
+}
+
 async function runTreeSearch() {
   const pattern = $("tree-search-input").value.trim();
   if (!pattern) {
@@ -4247,13 +4278,12 @@ async function runTreeSearch() {
     return;
   }
 
-  const [data, roots] = await Promise.all([
-    api(`/api/search?pattern=${encodeURIComponent(pattern)}`),
+  const [items, roots] = await Promise.all([
+    fetchAllSearchItems(pattern),
     api("/api/roots"),
   ]);
   const box = $("tree-search-result");
   box.innerHTML = "";
-  const items = data.items || [];
   const built = buildSearchTreeState(roots, items);
   if (!built.roots.length) {
     clearSearchTreeState();
